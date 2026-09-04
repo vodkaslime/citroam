@@ -243,19 +243,27 @@ describe("citroam Juicy Utility visual contracts", () => {
     expect(ruleFor('.canvas-capture > button[type="submit"]')).toMatch(/width:\s*40px[\s\S]*height:\s*40px[\s\S]*border-radius:\s*12px/);
   });
 
-  it("anchors the optional conversation as a compact paper above capture", () => {
-    const panel = ruleFor(".canvas-agent-panel");
+  it("lays conversation out as a native full-height workspace", () => {
+    const workspace = ruleFor(".canvas-agent-workspace");
 
-    expect(panel).toMatch(/position:\s*absolute/);
-    expect(panel).toMatch(/bottom:\s*calc\(100% \+ 12px\)/);
-    expect(panel).toMatch(/width:\s*min\(420px, 100%\)/);
-    expect(panel).toMatch(/max-height:\s*46vh/);
-    expect(panel).toMatch(/border:\s*1px solid var\(--line-strong\)/);
-    expect(panel).toMatch(/border-radius:\s*22px 22px 22px 13px/);
-    expect(panel).toMatch(/background:\s*var\(--surface\)/);
-    expect(panel).toMatch(/animation:\s*canvas-agent-in 220ms/);
+    expect(workspace).toMatch(/position:\s*absolute/);
+    expect(workspace).toMatch(/inset:\s*0/);
+    expect(workspace).toMatch(/display:\s*flex/);
+    expect(workspace).toMatch(/width:\s*min\(860px, calc\(100% - 40px\)\)/);
+    expect(workspace).toMatch(/height:\s*100%/);
+    expect(workspace).toMatch(/flex-direction:\s*column/);
+    expect(workspace).toMatch(/animation:\s*canvas-agent-in 220ms/);
     expect(styles).toMatch(/@keyframes canvas-agent-in[\s\S]*translateY\(8px\)[\s\S]*translateY\(0\)/);
+    expect(styles).not.toContain(".canvas-agent-panel");
+    expect(styles).not.toContain(".canvas-agent-trigger");
     expect(styles).not.toContain(".canvas-agent-backdrop");
+  });
+
+  it("keeps agent messages scrollable while the compose bar stays available", () => {
+    expect(ruleFor(".canvas-agent-turns"))
+      .toMatch(/min-height:\s*0[\s\S]*flex:\s*1 1 auto[\s\S]*overflow-y:\s*auto/);
+    expect(ruleFor(".canvas-agent-compose"))
+      .toMatch(/flex:\s*0 0 auto[\s\S]*background:/);
   });
 
   it("keeps pending agent batch outlines temporary and non-interactive", () => {
@@ -279,21 +287,19 @@ describe("citroam Juicy Utility visual contracts", () => {
   });
 
   it("gives every agent choice and action a short tactile cycle", () => {
-    expect(ruleFor(".canvas-agent-trigger")).toMatch(/min-height:\s*36px/);
-    expect(ruleFor(".canvas-agent-trigger")).toMatch(/transition:[\s\S]*background-color 140ms ease[\s\S]*transform 90ms ease/);
-    expect(ruleFor(".canvas-agent-trigger:hover")).toMatch(/transform:\s*translateY\(-1px\)/);
-    expect(ruleFor(".canvas-agent-trigger:active")).toMatch(/transform:\s*scale\(0\.96\)/);
     expect(ruleFor(".canvas-agent-candidates > button,\n.canvas-agent-results button")).toMatch(/min-height:\s*48px[\s\S]*transition:[\s\S]*transform 90ms ease/);
     expect(ruleFor(".canvas-agent-candidates > button:active,\n.canvas-agent-results button:active")).toMatch(/transform:\s*scale\(0\.98\)/);
+    expect(ruleFor(".canvas-agent-receipt-actions button,\n.canvas-agent-turn-actions button"))
+      .toMatch(/min-height:\s*32px[\s\S]*transition:[\s\S]*transform 90ms ease/);
     expect(ruleFor(".canvas-agent-compose input")).toMatch(/height:\s*40px/);
     expect(ruleFor(".canvas-agent-compose > button")).toMatch(/width:\s*40px[\s\S]*height:\s*40px/);
   });
 
-  it("keeps the agent paper inside the minimum-window safe area", () => {
+  it("keeps the agent workspace inside the minimum-window safe area", () => {
     const narrowRules = styles.slice(styles.lastIndexOf("@media (max-width: 760px)"));
 
-    expect(narrowRules).toMatch(/\.canvas-agent-panel\s*\{[^}]*width:\s*min\(420px, calc\(100% - 8px\)\)/);
-    expect(narrowRules).toMatch(/\.canvas-agent-trigger span\s*\{[^}]*display:\s*none/);
+    expect(narrowRules).toMatch(/\.canvas-agent-workspace\s*\{[^}]*width:\s*100%/);
+    expect(narrowRules).toMatch(/\.canvas-agent-workspace\s*\{[^}]*padding:/);
     expect(narrowRules).toMatch(/\.canvas-capture\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto auto/);
   });
 
@@ -320,8 +326,8 @@ describe("citroam Juicy Utility visual contracts", () => {
     expect(rail).toMatch(/transform:\s*translateX\(-50%\)/);
     expect(ruleFor(".canvas-undo")).not.toMatch(/position:\s*absolute/);
     expect(ruleFor(".canvas-capture-notice")).not.toMatch(/position:\s*absolute/);
-    expect(ruleFor(".canvas-feedback-rail.is-agent-open"))
-      .toMatch(/bottom:\s*calc\(86px \+ min\(46vh, 420px\) \+ 12px\)/);
+    expect(ruleFor(".canvas-feedback-rail.is-agent-view"))
+      .toMatch(/bottom:\s*92px/);
   });
 
   it("lets the shared feedback rail wrap instead of clipping at the minimum window width", () => {
@@ -517,7 +523,7 @@ describe("citroam Juicy Utility visual contracts", () => {
     const reducedIndex = styles.lastIndexOf("@media (prefers-reduced-motion: reduce)");
     const reduced = styles.slice(reducedIndex);
 
-    expect(reducedIndex).toBeGreaterThan(styles.lastIndexOf(".canvas-agent-panel"));
+    expect(reducedIndex).toBeGreaterThan(styles.lastIndexOf(".canvas-agent-workspace"));
     expect(reducedIndex).toBeGreaterThan(styles.lastIndexOf(".canvas-page-scene"));
     expect(reducedIndex).toBeGreaterThan(styles.lastIndexOf("button:focus-visible,"));
     expect(reduced).toContain("animation-duration: 0.01ms !important");
@@ -530,5 +536,28 @@ describe("citroam Juicy Utility visual contracts", () => {
     expect(ruleFor(":root")).toMatch(/color-scheme:\s*light/);
     expect(ruleFor('.canvas-app[data-theme="dark"]')).toMatch(/color-scheme:\s*dark/);
     expect(styles).not.toMatch(/#(?:000000|ffffff)\b/i);
+  });
+
+  it("presents app settings as one focused two-column utility surface", () => {
+    expect(ruleFor(".canvas-settings-backdrop"))
+      .toMatch(/position:\s*fixed[\s\S]*inset:\s*0[\s\S]*backdrop-filter:\s*blur\(8px\)/);
+    expect(ruleFor(".canvas-settings-panel"))
+      .toMatch(/grid-template-columns:\s*176px minmax\(0, 1fr\)[\s\S]*max-width:\s*860px[\s\S]*animation:\s*canvas-settings-in 180ms/);
+    expect(ruleFor(".canvas-settings-header")).toMatch(/grid-column:\s*1 \/ -1/);
+  });
+
+  it("keeps settings form controls comfortably clickable and visibly tactile", () => {
+    expect(ruleFor(".canvas-settings-field input")).toMatch(/min-height:\s*42px/);
+    expect(ruleFor(".canvas-settings-actions button")).toMatch(/min-height:\s*38px/);
+    expect(ruleFor(`.canvas-settings-actions button:active,
+.canvas-settings-data-actions button:active,
+.canvas-theme-choice button:active`))
+      .toMatch(/transform:\s*scale\(0\.98\)/);
+  });
+
+  it("collapses settings to one column at compact desktop widths", () => {
+    const narrowRules = styles.slice(styles.lastIndexOf("@media (max-width: 760px)"));
+    expect(narrowRules).toMatch(/\.canvas-settings-panel\s*\{[\s\S]*?grid-template-columns:\s*1fr/);
+    expect(narrowRules).toMatch(/\.canvas-settings-nav\s*\{[\s\S]*?grid-template-columns:\s*repeat\(3, 1fr\)/);
   });
 });

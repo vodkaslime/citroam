@@ -32,6 +32,10 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all"
+    "targets": "all",
+    "resources": {
+      "../agent/citroam.cordis.patch.yml": "agent/citroam.cordis.patch.yml",
+      "../agent/citroam-tool.mjs": "agent/citroam-tool.mjs"
+    }
   }
 }

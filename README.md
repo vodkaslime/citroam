@@ -21,7 +21,8 @@ citroam 是一块安静、快速、本地优先的生活与工作待办画布。
 - 保留 `#今天`、`#明天`、`!高`、`!中`、`!低` 的轻量快速语法。
 - 搜索、撤销和本地保存是安全基础，不增加使用流程。
 - 普通捕获与直接操作始终本地、确定性，不经过模型。
-- 对话 Agent 默认关闭，只在用户主动打开时处理一次明确请求；启动和普通本地操作不初始化模型、不发起网络请求，不主动整理、规划、催促或评价，也不成为第三个一级视图。
+- 对话 Agent 是画布上的原生操作层；打开后覆盖当前画布，处理明确请求后仍回到原位置，不增加第三个一级视图。它不主动整理、规划、催促或评价，普通本地操作也不依赖 Agent。
+- 应用设置统一管理外观、DeepSeek 模型 / Harness 路径与本地数据；API Key 只保存在系统 Keychain，不进入 Workspace 或备份。
 - 不引入自动整理、复杂项目管理或要求用户学习的新工作流。
 
 ## 运行
@@ -30,6 +31,20 @@ citroam 是一块安静、快速、本地优先的生活与工作待办画布。
 pnpm install
 pnpm tauri dev
 ```
+
+### 配置真实 Agent
+
+Agent 使用本机可访问的 DeepSeek Harness SDK。先在 `deepseek-harness` 构建可运行产物，然后启动 citroam，在标题栏打开“设置”→“Agent”，填写 API Key、模型名称和 Harness 路径，点击“保存并测试”：
+
+```bash
+cd /path/to/deepseek-harness
+pnpm build:lib:host   # 生成 apps/cli/lib 与各 package/lib
+
+cd /Users/jiachen/workspace/citroam
+pnpm tauri dev
+```
+
+没有配置 Harness 或 API Key 时，画布、总览、捕获、拖动、搜索、完成和撤销仍可离线使用；只有用户实际发送对话请求时，该请求会显示失败且不修改 Workspace。API Key 不要写入仓库、环境以外的普通配置文件或产品备份。开发环境仍可用 `CITROAM_HARNESS_ROOT`、`CITROAM_DEEPSEEK_MODEL` 与 `DEEPSEEK_API_KEY` 作为首次启动回退；一旦在设置中保存，应用配置优先。Harness 默认使用 App 进程专属的临时运行目录，并在退出时清理；如需保留或审查日志，可设置 `CITROAM_HARNESS_HOME` 指向自己的目录。
 
 只运行前端：
 
@@ -52,15 +67,18 @@ cd src-tauri && cargo check
 src/
   domain/          Card、Canvas、Area 与旧数据迁移模型
   data/            Tauri Store 与浏览器存储适配
+  settings/        应用设置面板与 Agent 配置仓库
+  agent/           Agent policy、Harness bridge 与测试替身
+  canvas/          画布渲染、时段几何与手势会话
   App.tsx          桌面产品界面与交互
   styles.css       语义色彩、布局和明暗主题
 src-tauri/
   capabilities/    Tauri 权限
   icons/           应用图标和平台派生资源
-  src/             Rust 宿主与 Store 插件注册
+  src/             Rust 宿主、settings 配置模块与 harness sidecar 桥
 ```
 
-Workspace 默认保存在当前设备的 Tauri 应用数据目录中。普通捕获、编辑、拖动、搜索、完成与本地备份不依赖账号、网络或模型服务；可选对话层若接入外部模型，只发送完成当前请求所需的最小上下文，失败时不改变画布。
+Workspace 默认保存在当前设备的 Tauri 应用数据目录中。普通捕获、编辑、拖动、搜索、完成与本地备份不依赖账号、网络或模型服务；画布内 Agent 面板通过 Tauri 按需启动真实 DeepSeek Harness sidecar，只发送完成当前请求所需的最小 Card 上下文。Harness 未构建、密钥缺失、网络失败或返回无效意图时，该次请求不改变画布，核心本地功能继续可用。Harness 运行日志与对话短历史不写入 Workspace、备份或永久聊天档案。
 
 为保证从早期 `notes` 版本升级时本地任务仍可读取，bundle identifier、Store 文件名和 localStorage key 暂时保留为内部兼容标识；它们不再作为用户可见品牌使用。
 

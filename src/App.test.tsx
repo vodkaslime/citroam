@@ -3552,37 +3552,77 @@ describe("date page canvas", () => {
   });
 });
 
-describe("optional agent conversation", () => {
-  it("opens from the capture bar or Ctrl J without becoming a primary view", async () => {
+describe("native agent workspace", () => {
+  it("exposes conversation as a primary view without a temporary capture-bar trigger", async () => {
+    render(<App repository={trackedRepository().repository} now={() => NOW} />);
+
+    await screen.findByRole("region", { name: "今天的画布" });
+    const navigation = screen.getByRole("navigation", { name: "主要视图" });
+    const conversation = within(navigation).getByRole("button", { name: "对话" });
+
+    expect(conversation).toHaveAttribute("aria-pressed", "false");
+    expect(within(navigation).getAllByRole("button")).toHaveLength(3);
+    expect(document.querySelector(".canvas-agent-trigger")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "对话工作区" })).not.toBeInTheDocument();
+  });
+
+  it("enters the native conversation workspace from navigation or Ctrl J and focuses its input", async () => {
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository().repository} now={() => NOW} />);
+
+    const conversation = await screen.findByRole("button", { name: "对话" });
+    await user.click(conversation);
+
+    expect(conversation).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "对话输入" }));
+
+    await user.click(screen.getByRole("button", { name: "画布" }));
+    fireEvent.keyDown(window, { key: "j", ctrlKey: true });
+
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "对话输入" }));
+  });
+
+  it("keeps the ordinary capture bar visible beneath the canvas agent panel", async () => {
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository().repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "快速记录卡片" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "今天的画布" })).toBeInTheDocument();
+  });
+
+  it("uses Ctrl J as a primary-view shortcut and restores the canvas capture focus", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
     await screen.findByRole("region", { name: "今天的画布" });
-    const trigger = screen.getByRole("button", { name: "打开对话" });
-    expect(trigger).toHaveAttribute("title", "对话");
-    expect(screen.getByRole("navigation", { name: "主要视图" })).not.toHaveTextContent("对话");
+    expect(screen.getByRole("navigation", { name: "主要视图" })).toHaveTextContent("画布总览对话");
 
     fireEvent.keyDown(window, { key: "j", ctrlKey: true });
 
-    expect(screen.getByRole("dialog", { name: "对话" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "对话输入" }));
-    await user.click(screen.getByRole("button", { name: "关闭对话" }));
+    await user.click(screen.getByRole("button", { name: "画布" }));
     await waitFor(() => expect(document.activeElement).toBe(
       screen.getByRole("textbox", { name: "快速记录卡片" }),
     ));
   });
 
-  it("marks the feedback rail when the agent paper is open so it can move above it", async () => {
+  it("marks the feedback rail for the native agent view", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
     const capture = await screen.findByRole("textbox", { name: "快速记录卡片" });
 
     await user.type(capture, "临时卡片{Enter}");
     await waitFor(() => expect(screen.getByRole("button", { name: "撤销上一步" })).toBeInTheDocument());
-    await user.click(screen.getByRole("button", { name: "打开对话" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
 
     expect(screen.getByRole("button", { name: "撤销上一步" }).closest(".canvas-feedback-rail"))
-      .toHaveClass("is-agent-open");
+      .toHaveClass("is-agent-view");
   });
 
   it("keeps the ordinary capture draft separate and restores its quick candidates", async () => {
@@ -3592,12 +3632,12 @@ describe("optional agent conversation", () => {
 
     await user.type(capture, "买牛奶#");
     expect(screen.getByRole("listbox", { name: "快速语法候选" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "打开对话" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
 
     expect(capture).toHaveValue("买牛奶#");
     expect(screen.queryByRole("listbox", { name: "快速语法候选" })).not.toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "明天下午交水电费");
-    await user.click(screen.getByRole("button", { name: "关闭对话" }));
+    await user.click(screen.getByRole("button", { name: "画布" }));
 
     expect(capture).toHaveValue("买牛奶#");
     expect(screen.getByRole("listbox", { name: "快速语法候选" })).toBeInTheDocument();
@@ -3609,7 +3649,7 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "明天下午交水电费{Enter}");
 
     expect(await screen.findByText("好，放到明天下午了。")).toBeInTheDocument();
@@ -3625,7 +3665,7 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     const input = screen.getByRole("textbox", { name: "对话输入" });
     await user.type(input, "明天下午交水电费{Enter}");
 
@@ -3633,17 +3673,128 @@ describe("optional agent conversation", () => {
     await waitFor(() => expect(document.activeElement).toBe(input));
   });
 
+  it("does not submit the conversation while Chinese IME composition is active", async () => {
+    const tracked = trackedRepository();
+    render(<App repository={tracked.repository} now={() => NOW} />);
+
+    await userEvent.setup().click(await screen.findByRole("button", { name: "对话" }));
+    const input = screen.getByRole("textbox", { name: "对话输入" });
+    const form = input.closest("form");
+    expect(form).not.toBeNull();
+
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: "明天下午交水电费" } });
+    const enterDuringComposition = new KeyboardEvent("keydown", {
+      key: "Enter",
+      code: "Enter",
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    input.dispatchEvent(enterDuringComposition);
+    expect(enterDuringComposition.defaultPrevented).toBe(false);
+    await act(async () => {
+      fireEvent.submit(form!);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    });
+
+    expect(tracked.current().cards).toHaveLength(0);
+    expect(screen.queryByText("好，放到明天下午了。")).not.toBeInTheDocument();
+    expect(input).toHaveValue("明天下午交水电费");
+
+    fireEvent.compositionEnd(input);
+    expect(input).toHaveValue("明天下午交水电费");
+    expect(tracked.current().cards).toHaveLength(0);
+  });
+
+  it("uses a newly created card as the next conversation target", async () => {
+    const tracked = trackedRepository();
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    const input = screen.getByRole("textbox", { name: "对话输入" });
+    await user.type(input, "明天下午交水电费{Enter}");
+
+    await waitFor(() => expect(screen.getByText("正在处理：交水电费")).toBeInTheDocument());
+    await user.type(input, "这个做完了{Enter}");
+
+    await waitFor(() => expect(tracked.current().cards[0]?.status).toBe("completed"));
+  });
+
   it("undoes the exact action from its receipt", async () => {
     const tracked = trackedRepository();
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "明天下午交水电费{Enter}");
     await user.click(await screen.findByRole("button", { name: "撤销这次操作" }));
 
     await waitFor(() => expect(tracked.current().cards).toHaveLength(0));
     expect(screen.getByText("刚才的更改已经撤销。")).toBeInTheDocument();
+  });
+
+  it("does not misreport a receipt when canvas undo already reverted the agent action", async () => {
+    const tracked = trackedRepository();
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "记下买牛奶{Enter}");
+    await screen.findByText("好，放到今天了。");
+
+    await user.click(screen.getByRole("button", { name: "画布" }));
+    await user.click(screen.getByRole("button", { name: "撤销上一步" }));
+    await waitFor(() => expect(tracked.current().cards).toHaveLength(0));
+
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    await user.click(screen.getByRole("button", { name: "撤销这次操作" }));
+
+    expect(screen.getByText("这次操作已经撤销。")).toBeInTheDocument();
+    expect(screen.queryByText("这次操作之后已有新的更改，请使用画布上的撤销。")).not.toBeInTheDocument();
+  });
+
+  it("restores the deleted card as the conversation target after undo", async () => {
+    const tracked = trackedRepository(workspaceWithTodayCard());
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    const input = screen.getByRole("textbox", { name: "对话输入" });
+    await user.type(input, "删除把卡片放在时间围栏外{Enter}");
+    await user.click(screen.getByRole("button", { name: "确认删除" }));
+    await waitFor(() => expect(tracked.current().cards[0].status).toBe("deleted"));
+
+    await user.click(screen.getByRole("button", { name: "撤销这次操作" }));
+    await waitFor(() => expect(tracked.current().cards[0].status).toBe("open"));
+    expect(screen.getByText("正在处理：把卡片放在时间围栏外")).toBeInTheDocument();
+
+    await user.type(input, "这个完成了{Enter}");
+    await waitFor(() => expect(tracked.current().cards[0].status).toBe("completed"));
+  });
+
+  it("keeps conversation turn keys unique after undo and an immediate follow-up", async () => {
+    const tracked = trackedRepository(workspaceWithTodayCard());
+    const user = userEvent.setup();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    try {
+      render(<App repository={tracked.repository} now={() => NOW} />);
+
+      await user.click(await screen.findByRole("button", { name: "对话" }));
+      const input = screen.getByRole("textbox", { name: "对话输入" });
+      await user.type(input, "删除把卡片放在时间围栏外{Enter}");
+      await user.click(screen.getByRole("button", { name: "确认删除" }));
+      await waitFor(() => expect(tracked.current().cards[0].status).toBe("deleted"));
+      await user.click(screen.getByRole("button", { name: "撤销这次操作" }));
+      await waitFor(() => expect(tracked.current().cards[0].status).toBe("open"));
+      await user.type(input, "这个完成了{Enter}");
+      await waitFor(() => expect(tracked.current().cards[0].status).toBe("completed"));
+
+      expect(consoleError.mock.calls.some(([message]) => String(message).includes("same key"))).toBe(false);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 
   it("keeps ordinary capture local even when an agent model is provided", async () => {
@@ -3666,7 +3817,7 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} agentModel={{ interpret }} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "明天下午交水电费{Enter}");
 
     expect(await screen.findByText("现在没有处理成功，画布没有变化。")).toBeInTheDocument();
@@ -3679,7 +3830,7 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把报销放到明天下午{Enter}");
 
     expect(screen.getByText("找到两张“报销”，你指哪一张？")).toBeInTheDocument();
@@ -3695,12 +3846,77 @@ describe("optional agent conversation", () => {
       .toBe("2026-08-25");
   });
 
+  it("supports keyboard selection of an ambiguous agent candidate", async () => {
+    const tracked = trackedRepository(workspaceWithAgentCards());
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把报销放到明天下午{Enter}");
+
+    const choices = screen.getByRole("listbox", { name: "请选择卡片" });
+    const options = within(choices).getAllByRole("option");
+    expect(options[0]).toHaveAttribute("aria-selected", "true");
+    options[0].focus();
+    expect(document.activeElement).toBe(options[0]);
+    await user.keyboard("{ArrowDown}{Enter}");
+
+    await waitFor(() => expect(tracked.current().cards.find((card) => card.id === "agent-expense-2")?.timeConstraint)
+      .toMatchObject({ date: "2026-08-26", period: "afternoon" }));
+    expect(tracked.current().cards.find((card) => card.id === "agent-expense-1")?.timeConstraint?.date)
+      .toBe("2026-08-25");
+  });
+
+  it("places focus on the first ambiguous agent candidate", async () => {
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository(workspaceWithAgentCards()).repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把报销放到明天下午{Enter}");
+
+    const choices = screen.getByRole("listbox", { name: "请选择卡片" });
+    const options = within(choices).getAllByRole("option");
+    await waitFor(() => expect(document.activeElement).toBe(options[0]));
+    expect(options[0]).toHaveAttribute("tabindex", "0");
+    expect(options[1]).toHaveAttribute("tabindex", "-1");
+  });
+
+  it("places focus on the primary action for a batch confirmation", async () => {
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository(workspaceWithAgentCards()).repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把今天没做完的移到周五{Enter}");
+
+    const confirm = screen.getByRole("button", { name: "确认这次操作" });
+    await waitFor(() => expect(document.activeElement).toBe(confirm));
+  });
+
+  it("keeps the chosen candidate as the next conversation target", async () => {
+    const tracked = trackedRepository(workspaceWithAgentCards());
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    const input = screen.getByRole("textbox", { name: "对话输入" });
+    await user.type(input, "把报销放到明天下午{Enter}");
+    const choices = screen.getByRole("listbox", { name: "请选择卡片" });
+    await user.click(within(choices).getByRole("option", { name: /整理报销.*未完成.*今天/ }));
+
+    expect(screen.getByText("正在处理：整理报销")).toBeInTheDocument();
+    await user.type(input, "这个做完了{Enter}");
+
+    await waitFor(() => expect(tracked.current().cards.find((card) => card.id === "agent-expense-2")?.status)
+      .toBe("completed"));
+    expect(tracked.current().cards.find((card) => card.id === "agent-expense-1")?.status).toBe("open");
+  });
+
   it("previews a batch and commits it as one undoable action", async () => {
     const tracked = trackedRepository(workspaceWithAgentCards());
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把今天没做完的移到周五{Enter}");
 
     expect(screen.getByText("会移动 2 张 Card 到周五。")).toBeInTheDocument();
@@ -3712,20 +3928,36 @@ describe("optional agent conversation", () => {
     await waitFor(() => expect(tracked.current().cards.every((card) => card.timeConstraint?.date === "2026-08-25")).toBe(true));
   });
 
+  it("does not choose a conversational target for a one-card batch", async () => {
+    const tracked = trackedRepository(workspaceWithTodayCard());
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    const input = screen.getByRole("textbox", { name: "对话输入" });
+    await user.type(input, "把今天没做完的移到周五{Enter}");
+    await user.click(screen.getByRole("button", { name: "确认这次操作" }));
+
+    await waitFor(() => expect(tracked.current().cards[0].timeConstraint?.date).toBe("2026-08-28"));
+    expect(screen.queryByText("正在处理：把卡片放在时间围栏外")).not.toBeInTheDocument();
+  });
+
   it("shows non-persistent outlines for visible cards in a pending batch", async () => {
     const tracked = trackedRepository(workspaceWithAgentCards());
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把今天没做完的移到周五{Enter}");
 
     expect(screen.getByText("会移动 2 张 Card 到周五。")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "画布" }));
     const previews = document.querySelectorAll(".canvas-agent-preview");
     expect(previews).toHaveLength(2);
     expect(Array.from(previews).every((preview) => preview.getAttribute("aria-hidden") === "true")).toBe(true);
     expect(tracked.current().cards.every((card) => card.timeConstraint?.date === "2026-08-25")).toBe(true);
 
+    await user.click(screen.getByRole("button", { name: "对话" }));
     await user.click(screen.getByRole("button", { name: "取消" }));
     expect(document.querySelectorAll(".canvas-agent-preview")).toHaveLength(0);
   });
@@ -3735,7 +3967,7 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "删除把卡片放在时间围栏外{Enter}");
 
     const confirm = screen.getByRole("dialog", { name: "删除这张卡片？" });
@@ -3748,35 +3980,62 @@ describe("optional agent conversation", () => {
     expect(screen.getByRole("button", { name: "撤销这次操作" })).toBeInTheDocument();
   });
 
-  it("backs out of a pending batch before closing the conversation", async () => {
+  it("backs out of a pending batch without leaving the conversation workspace", async () => {
     const tracked = trackedRepository(workspaceWithAgentCards());
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把今天没做完的移到周五{Enter}");
     await user.keyboard("{Escape}");
 
-    expect(screen.getByRole("dialog", { name: "对话" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "确认这次操作" })).not.toBeInTheDocument();
     expect(tracked.current().cards.every((card) => card.timeConstraint?.date === "2026-08-25")).toBe(true);
-
-    await user.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog", { name: "对话" })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "对话输入" }));
   });
 
-  it("shows a factual today query in overview without creating an undo action", async () => {
+  it("keeps a factual today query in conversation until the user opens overview", async () => {
     const tracked = trackedRepository(workspaceWithAgentCards());
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "今天还有什么{Enter}");
 
     expect(await screen.findByText("今天还有 2 张未完成。")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "总览" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByRole("dialog", { name: "对话" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "对话" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "撤销这次操作" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "在总览中查看" }));
+    expect(screen.getByRole("button", { name: "总览" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /未完成 2/ })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps an explicit-date query read-only instead of creating a card", async () => {
+    const tracked = trackedRepository(workspaceWithAgentCards());
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "明天有什么任务{Enter}");
+
+    expect(await screen.findByText("明天没有未完成的 Card。", { exact: false })).toBeInTheDocument();
+    expect(tracked.current().cards).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "查看任务" })).not.toBeInTheDocument();
+  });
+
+  it("keeps an incomplete schedule request read-only instead of creating a card", async () => {
+    const tracked = trackedRepository(workspaceWithAgentCards());
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把报销放到那里{Enter}");
+
+    expect(await screen.findByText("请说清要放到哪一天或时段，画布没有变化。", { exact: false })).toBeInTheDocument();
+    expect(tracked.current().cards).toHaveLength(2);
   });
 
   it("replaces search with conversation instead of stacking transient layers", async () => {
@@ -3788,38 +4047,43 @@ describe("optional agent conversation", () => {
     fireEvent.keyDown(window, { key: "j", ctrlKey: true });
 
     expect(screen.queryByRole("dialog", { name: "搜索卡片" })).not.toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "对话" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
   });
 
-  it("replaces conversation with search instead of keeping two input layers", async () => {
+  it("temporarily replaces conversation with search and returns to the same draft", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "先留在这里");
     fireEvent.keyDown(window, { key: "k", ctrlKey: true });
 
-    expect(screen.queryByRole("dialog", { name: "对话" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "对话工作区" })).not.toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "搜索卡片" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "对话输入" })).toHaveValue("先留在这里");
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "对话输入" }));
   });
 
-  it("closes the temporary conversation when switching primary views", async () => {
+  it("unmounts conversation when switching primary views", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
-    expect(screen.getByRole("dialog", { name: "对话" })).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "总览" }));
 
     expect(screen.getByRole("heading", { name: "总览" })).toBeInTheDocument();
-    expect(screen.queryByRole("dialog", { name: "对话" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "对话工作区" })).not.toBeInTheDocument();
   });
 
-  it("keeps the selected primary-view button focused after closing conversation", async () => {
+  it("keeps the selected primary-view button focused after leaving conversation", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     const overview = screen.getByRole("button", { name: "总览" });
     await user.click(overview);
 
@@ -3830,7 +4094,7 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository(workspaceWithTodayCard()).repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "删除把卡片放在时间围栏外{Enter}");
     expect(screen.getByRole("dialog", { name: "删除这张卡片？" })).toBeInTheDocument();
 
@@ -3846,7 +4110,7 @@ describe("optional agent conversation", () => {
     render(<App repository={tracked.repository} now={() => NOW} />);
 
     await user.click(await screen.findByRole("button", { name: "打开卡片：把卡片放在时间围栏外" }));
-    await user.click(screen.getByRole("button", { name: "打开对话" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
     expect(screen.getByText("正在处理：把卡片放在时间围栏外")).toBeInTheDocument();
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "这个做完了{Enter}");
 
@@ -3855,19 +4119,42 @@ describe("optional agent conversation", () => {
     expect(screen.queryByRole("complementary", { name: "卡片详情" })).not.toBeInTheDocument();
   });
 
-  it("follows a selected card to its new date after an agent schedule", async () => {
+  it("invalidates the agent card context when the selected card is deleted", async () => {
+    let receivedContext: { selectedCardId: string | null } | null = null;
+    const agentModel = {
+      interpret: async (_request: string, context: { selectedCardId: string | null }) => {
+        receivedContext = context;
+        return { type: "unsupported" as const, message: "没有处理。" };
+      },
+    };
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository(workspaceWithTodayCard()).repository} now={() => NOW} agentModel={agentModel} />);
+
+    await user.click(await screen.findByRole("button", { name: "打开卡片：把卡片放在时间围栏外" }));
+    await user.click(screen.getByRole("button", { name: "删除卡片" }));
+    await user.click(screen.getByRole("button", { name: "确认删除" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "这个做完了{Enter}");
+
+    await screen.findByText("没有处理。");
+    expect((receivedContext as { selectedCardId: string | null } | null)?.selectedCardId).toBeNull();
+  });
+
+  it("keeps an agent schedule in conversation until the user views the moved card", async () => {
     const tracked = trackedRepository(workspaceWithTodayCard());
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} />);
 
     await user.click(await screen.findByRole("button", { name: "打开卡片：把卡片放在时间围栏外" }));
-    await user.click(screen.getByRole("button", { name: "打开对话" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把这个放到明天下午{Enter}");
 
     await waitFor(() => expect(tracked.current().cards[0].timeConstraint).toMatchObject({
       date: "2026-08-26",
       period: "afternoon",
     }));
+    expect(screen.getByRole("button", { name: "对话" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "查看把卡片放在时间围栏外" }));
     expect(screen.getByRole("button", { name: "选择日期页面" })).toHaveTextContent("明天");
     expect(screen.getByRole("article", { name: "卡片：把卡片放在时间围栏外" })).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "卡片详情" })).toBeInTheDocument();
@@ -3880,7 +4167,7 @@ describe("optional agent conversation", () => {
 
     const before = { ...tracked.current().placements[0] };
     await user.click(await screen.findByRole("button", { name: "打开卡片：把卡片放在时间围栏外" }));
-    await user.click(screen.getByRole("button", { name: "打开对话" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把这个改成上午十点{Enter}");
 
     await waitFor(() => expect(tracked.current().cards[0].timeConstraint).toMatchObject({
@@ -3891,16 +4178,18 @@ describe("optional agent conversation", () => {
     expect(tracked.current().placements[0]).toMatchObject({ x: before.x, y: 346 });
   });
 
-  it("keeps the open inspector synchronized when the agent renames its selected card", async () => {
+  it("keeps selected-card context when the agent renames it and opens the updated result", async () => {
     const tracked = trackedRepository(workspaceWithTodayCard());
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} />);
 
     await user.click(await screen.findByRole("button", { name: "打开卡片：把卡片放在时间围栏外" }));
-    await user.click(screen.getByRole("button", { name: "打开对话" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把这个标题改成整理桌面{Enter}");
 
     await waitFor(() => expect(tracked.current().cards[0].title).toBe("整理桌面"));
+    expect(screen.getByText("正在处理：整理桌面")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "查看整理桌面" }));
     expect(screen.getByRole("textbox", { name: "卡片标题" })).toHaveValue("整理桌面");
   });
 
@@ -3910,10 +4199,10 @@ describe("optional agent conversation", () => {
     render(<App repository={tracked.repository} now={() => NOW} />);
 
     await user.click(await screen.findByRole("button", { name: "打开卡片：把卡片放在时间围栏外" }));
-    await user.click(screen.getByRole("button", { name: "打开对话" }));
     fireEvent.change(screen.getByRole("textbox", { name: "卡片标题" }), {
       target: { value: "完成前写下的新标题" },
     });
+    await user.click(screen.getByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "这个做完了{Enter}");
 
     await waitFor(() => expect(tracked.current().cards[0]).toMatchObject({
@@ -3927,7 +4216,7 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "找报销{Enter}");
 
     expect(await screen.findByText("找到 2 张相关 Card。")).toBeInTheDocument();
@@ -3935,6 +4224,20 @@ describe("optional agent conversation", () => {
     expect(within(results).getAllByRole("button")).toHaveLength(2);
     await user.click(within(results).getByRole("button", { name: /查看提交报销.*今天/ }));
     expect(screen.getByRole("complementary", { name: "卡片详情" })).toBeInTheDocument();
+  });
+
+  it("uses a card opened from agent results as the next conversation target", async () => {
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository(workspaceWithAgentCards()).repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "找报销{Enter}");
+    const results = await screen.findByRole("list", { name: "相关卡片" });
+    await user.click(within(results).getByRole("button", { name: /查看整理报销.*今天/ }));
+    expect(screen.getByRole("textbox", { name: "卡片标题" })).toHaveValue("整理报销");
+
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    expect(screen.getByText("正在处理：整理报销")).toBeInTheDocument();
   });
 
   it("opens a completed agent result in the completed overview", async () => {
@@ -3946,7 +4249,7 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository(completed).repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "找提交报销{Enter}");
 
     const results = await screen.findByRole("list", { name: "相关卡片" });
@@ -3957,16 +4260,41 @@ describe("optional agent conversation", () => {
     expect(screen.queryByRole("complementary", { name: "卡片详情" })).not.toBeInTheDocument();
   });
 
+  it("keeps a completed card as the conversation target after viewing its result", async () => {
+    const completed = workspaceReducer(workspaceWithAgentCards(), {
+      type: "toggle-card",
+      cardId: "agent-expense-1",
+      now: NOW,
+    });
+    const tracked = trackedRepository(completed);
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "找提交报销{Enter}");
+    const results = await screen.findByRole("list", { name: "相关卡片" });
+    await user.click(within(results).getByRole("button", { name: /查看提交报销.*已完成/ }));
+
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "这个恢复{Enter}");
+
+    await waitFor(() => expect(tracked.current().cards.find((card) => card.id === "agent-expense-1")?.status)
+      .toBe("open"));
+    expect(tracked.current().cards).toHaveLength(2);
+    expect(screen.getByText("恢复了。")) .toBeInTheDocument();
+  });
+
   it("opens one uniquely named card directly from a conversation request", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository(workspaceWithAgentCards()).repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "打开提交报销{Enter}");
 
-    expect(await screen.findByText("找到了。")).toBeInTheDocument();
-    expect(screen.getByRole("complementary", { name: "卡片详情" })).toBeInTheDocument();
+    expect(await screen.findByRole("complementary", { name: "卡片详情" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "卡片标题" })).toHaveValue("提交报销");
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    expect(screen.getByText("找到了。")).toBeInTheDocument();
   });
 
   it("shows a real busy state while the model is interpreting", async () => {
@@ -3979,10 +4307,10 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} agentModel={agentModel} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "记下等待{Enter}");
 
-    const dialog = screen.getByRole("dialog", { name: "对话" });
+    const dialog = screen.getByRole("region", { name: "对话工作区" });
     expect(dialog).toHaveAttribute("aria-busy", "true");
     expect(screen.getByRole("status")).toHaveTextContent("正在处理");
     expect(screen.getByRole("textbox", { name: "对话输入" })).not.toBeDisabled();
@@ -3994,7 +4322,7 @@ describe("optional agent conversation", () => {
     await waitFor(() => expect(dialog).toHaveAttribute("aria-busy", "false"));
   });
 
-  it("ignores a model result that arrives after the conversation closes", async () => {
+  it("finishes a valid model request after the user switches to canvas", async () => {
     let resolveIntent: ((intent: { type: "create"; title: string; timeConstraint: null }) => void) | null = null;
     const agentModel = {
       interpret: () => new Promise<{ type: "create"; title: string; timeConstraint: null }>((resolve) => {
@@ -4005,13 +4333,125 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} agentModel={agentModel} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "稍后才回来{Enter}");
-    await user.click(screen.getByRole("button", { name: "关闭对话" }));
-    await act(async () => resolveIntent?.({ type: "create", title: "不该出现", timeConstraint: null }));
+    await user.click(screen.getByRole("button", { name: "画布" }));
+    await act(async () => resolveIntent?.({ type: "create", title: "稍后出现", timeConstraint: null }));
 
-    expect(tracked.current().cards).toHaveLength(0);
-    expect(screen.queryByText("不该出现")).not.toBeInTheDocument();
+    await waitFor(() => expect(tracked.current().cards[0]?.title).toBe("稍后出现"));
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    expect(screen.getByText("好，放到随手页了。")).toBeInTheDocument();
+  });
+
+  it("keeps a selected-card request valid when only the primary view changes", async () => {
+    let resolveIntent: ((intent: {
+      type: "set-status";
+      target: { kind: "id"; cardId: string };
+      status: "completed";
+    }) => void) | null = null;
+    const agentModel = {
+      interpret: () => new Promise<{
+        type: "set-status";
+        target: { kind: "id"; cardId: string };
+        status: "completed";
+      }>((resolve) => {
+        resolveIntent = resolve;
+      }),
+    };
+    const tracked = trackedRepository(workspaceWithTodayCard());
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} agentModel={agentModel} />);
+
+    await user.click(await screen.findByRole("button", { name: "打开卡片：把卡片放在时间围栏外" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "这个做完了{Enter}");
+    await user.click(screen.getByRole("button", { name: "画布" }));
+    await act(async () => resolveIntent?.({
+      type: "set-status",
+      target: { kind: "id", cardId: "today-card" },
+      status: "completed",
+    }));
+
+    await waitFor(() => expect(tracked.current().cards[0].status).toBe("completed"));
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    expect(screen.getByText("完成了。")).toBeInTheDocument();
+  });
+
+  it("drops a selected-card request when the user explicitly selects another card", async () => {
+    let resolveIntent: ((intent: {
+      type: "set-status";
+      target: { kind: "id"; cardId: string };
+      status: "completed";
+    }) => void) | null = null;
+    const agentModel = {
+      interpret: () => new Promise<{
+        type: "set-status";
+        target: { kind: "id"; cardId: string };
+        status: "completed";
+      }>((resolve) => {
+        resolveIntent = resolve;
+      }),
+    };
+    const tracked = trackedRepository(workspaceWithAgentCards());
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} agentModel={agentModel} />);
+
+    await user.click(await screen.findByRole("button", { name: "打开卡片：提交报销" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "这个做完了{Enter}");
+    await user.click(screen.getByRole("button", { name: "画布" }));
+    await user.click(screen.getByRole("button", { name: "打开卡片：整理报销" }));
+
+    await act(async () => {
+      resolveIntent?.({
+        type: "set-status",
+        target: { kind: "id", cardId: "agent-expense-1" },
+        status: "completed",
+      });
+    });
+
+    expect(tracked.current().cards.find((card) => card.id === "agent-expense-1")?.status).toBe("open");
+    expect(tracked.current().cards.find((card) => card.id === "agent-expense-2")?.status).toBe("open");
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    expect(screen.getByText("当前现场已经变化，这次没有执行。画布没有变化。", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText("完成了。"), "stale selected-card action must not execute").not.toBeInTheDocument();
+  });
+
+  it("uses the active canvas view for a result that resolves after switching views", async () => {
+    let resolveIntent: ((intent: {
+      type: "schedule";
+      target: { kind: "id"; cardId: string };
+      timeConstraint: { date: string; period: "afternoon" };
+    }) => void) | null = null;
+    const agentModel = {
+      interpret: () => new Promise<{
+        type: "schedule";
+        target: { kind: "id"; cardId: string };
+        timeConstraint: { date: string; period: "afternoon" };
+      }>((resolve) => {
+        resolveIntent = resolve;
+      }),
+    };
+    const tracked = trackedRepository(workspaceWithTodayCard());
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} agentModel={agentModel} />);
+
+    await user.click(await screen.findByRole("button", { name: "打开卡片：把卡片放在时间围栏外" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "把这个放到下午{Enter}");
+    await user.click(screen.getByRole("button", { name: "画布" }));
+
+    await act(async () => {
+      resolveIntent?.({
+        type: "schedule",
+        target: { kind: "id", cardId: "today-card" },
+        timeConstraint: { date: "2026-08-25", period: "afternoon" },
+      });
+    });
+
+    const card = await screen.findByRole("article", { name: "卡片：把卡片放在时间围栏外" });
+    await waitFor(() => expect(card).toHaveClass("is-dropping"));
+    expect(tracked.current().cards[0].timeConstraint?.period).toBe("afternoon");
   });
 
   it("drops a pending result when the visible page context changes", async () => {
@@ -4034,8 +4474,9 @@ describe("optional agent conversation", () => {
     render(<App repository={tracked.repository} now={() => NOW} agentModel={agentModel} />);
 
     await user.click(await screen.findByRole("button", { name: "打开卡片：把卡片放在时间围栏外" }));
-    await user.click(screen.getByRole("button", { name: "打开对话" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "这个做完了{Enter}");
+    await user.click(screen.getByRole("button", { name: "画布" }));
     await user.click(screen.getByRole("button", { name: "后一天" }));
 
     await act(async () => {
@@ -4047,8 +4488,49 @@ describe("optional agent conversation", () => {
     });
 
     expect(tracked.current().cards[0].status).toBe("open");
+    await user.click(screen.getByRole("button", { name: "对话" }));
     expect(screen.getByText("当前现场已经变化，这次没有执行。画布没有变化。", { exact: false })).toBeInTheDocument();
     expect(screen.queryByText("完成了。")).not.toBeInTheDocument();
+  });
+
+  it("drops a pending result even when the page leaves and returns before it resolves", async () => {
+    let resolveIntent: ((intent: {
+      type: "set-status";
+      target: { kind: "id"; cardId: string };
+      status: "completed";
+    }) => void) | null = null;
+    const agentModel = {
+      interpret: () => new Promise<{
+        type: "set-status";
+        target: { kind: "id"; cardId: string };
+        status: "completed";
+      }>((resolve) => {
+        resolveIntent = resolve;
+      }),
+    };
+    const tracked = trackedRepository(workspaceWithTodayCard());
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} agentModel={agentModel} />);
+
+    await user.click(await screen.findByRole("button", { name: "打开卡片：把卡片放在时间围栏外" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "这个做完了{Enter}");
+    await user.click(screen.getByRole("button", { name: "画布" }));
+    await user.click(screen.getByRole("button", { name: "后一天" }));
+    await user.click(screen.getByRole("button", { name: "前一天" }));
+
+    await act(async () => {
+      resolveIntent?.({
+        type: "set-status",
+        target: { kind: "id", cardId: "today-card" },
+        status: "completed",
+      });
+    });
+
+    expect(tracked.current().cards[0].status).toBe("open");
+    await user.click(screen.getByRole("button", { name: "对话" }));
+    expect(screen.getByText("当前现场已经变化，这次没有执行。画布没有变化。", { exact: false })).toBeInTheDocument();
+    expect(screen.queryByText("完成了。")) .not.toBeInTheDocument();
   });
 
   it("drops a pending result when the overview status changes", async () => {
@@ -4073,8 +4555,9 @@ describe("optional agent conversation", () => {
     render(<App repository={tracked.repository} now={() => NOW} agentModel={agentModel} />);
 
     await user.click(await screen.findByRole("button", { name: "总览" }));
-    await user.click(screen.getByRole("button", { name: "打开对话" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "完成提交报销{Enter}");
+    await user.click(screen.getByRole("button", { name: "总览" }));
     await user.click(screen.getByRole("button", { name: /已完成/ }));
     expect(screen.getByRole("button", { name: /已完成/ })).toHaveAttribute("aria-pressed", "true");
 
@@ -4109,8 +4592,9 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={tracked.repository} now={() => NOW} agentModel={agentModel} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "改一下{Enter}");
+    await user.click(screen.getByRole("button", { name: "画布" }));
 
     const card = screen.getByRole("article", { name: "卡片：把卡片放在时间围栏外" });
     fireEvent.pointerDown(card, { pointerId: 501, button: 0, clientX: 100, clientY: 100 });
@@ -4133,6 +4617,42 @@ describe("optional agent conversation", () => {
     expect(tracked.current().placements[0].x).toBe(400);
   });
 
+  it("does not play a drop animation for a metadata-only agent update", async () => {
+    let resolveIntent: ((intent: {
+      type: "update";
+      target: { kind: "id"; cardId: string };
+      patch: { title: string };
+    }) => void) | null = null;
+    const agentModel = {
+      interpret: () => new Promise<{
+        type: "update";
+        target: { kind: "id"; cardId: string };
+        patch: { title: string };
+      }>((resolve) => {
+        resolveIntent = resolve;
+      }),
+    };
+    const tracked = trackedRepository(workspaceWithTodayCard());
+    const user = userEvent.setup();
+    render(<App repository={tracked.repository} now={() => NOW} agentModel={agentModel} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "改一下{Enter}");
+    await user.click(screen.getByRole("button", { name: "画布" }));
+
+    await act(async () => {
+      resolveIntent?.({
+        type: "update",
+        target: { kind: "id", cardId: "today-card" },
+        patch: { title: "只改文字" },
+      });
+    });
+
+    const card = await screen.findByRole("article", { name: "卡片：只改文字" });
+    expect(card).not.toHaveClass("is-dropping");
+    expect(tracked.current().cards[0].title).toBe("只改文字");
+  });
+
   it("does not let an in-flight area gesture overwrite a completed agent change", async () => {
     let resolveIntent: ((intent: {
       type: "update";
@@ -4153,8 +4673,9 @@ describe("optional agent conversation", () => {
     render(<App repository={tracked.repository} now={() => NOW} agentModel={agentModel} />);
 
     await user.click(await screen.findByRole("button", { name: "打开随手页" }));
-    await user.click(screen.getByRole("button", { name: "打开对话" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "改一下{Enter}");
+    await user.click(screen.getByRole("button", { name: "画布" }));
 
     const moveHandle = screen.getByRole("button", { name: "移动区域：工作草稿" });
     fireEvent.pointerDown(moveHandle, { pointerId: 502, button: 0, clientX: 100, clientY: 100 });
@@ -4179,27 +4700,27 @@ describe("optional agent conversation", () => {
     expect(tracked.current().areas[0]).toMatchObject({ x: 260, y: 180 });
   });
 
-  it("clears the short conversation when its paper closes", async () => {
+  it("keeps the short conversation across primary-view switches", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.type(screen.getByRole("textbox", { name: "对话输入" }), "明天下午交水电费{Enter}");
     await screen.findByText("好，放到明天下午了。");
-    await user.click(screen.getByRole("button", { name: "关闭对话" }));
-    await user.click(screen.getByRole("button", { name: "打开对话" }));
+    await user.click(screen.getByRole("button", { name: "画布" }));
+    await user.click(screen.getByRole("button", { name: "对话" }));
 
-    expect(screen.queryByText("明天下午交水电费")).not.toBeInTheDocument();
-    expect(screen.queryByText("好，放到明天下午了。")).not.toBeInTheDocument();
+    expect(screen.getByText("明天下午交水电费")).toBeInTheDocument();
+    expect(screen.getByText("好，放到明天下午了。")).toBeInTheDocument();
   });
 
   it("keeps a long agent session as a short rolling transcript", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     const input = screen.getByRole("textbox", { name: "对话输入" });
-    const dialog = screen.getByRole("dialog", { name: "对话" });
+    const dialog = screen.getByRole("region", { name: "对话工作区" });
     for (let index = 1; index <= 5; index += 1) {
       await user.type(input, `记下第${index}件事{Enter}`);
       await within(dialog).findByText(`记下第${index}件事`);
@@ -4214,9 +4735,9 @@ describe("optional agent conversation", () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     const input = screen.getByRole("textbox", { name: "对话输入" });
-    const dialog = screen.getByRole("dialog", { name: "对话" });
+    const dialog = screen.getByRole("region", { name: "对话工作区" });
     for (let index = 1; index <= 4; index += 1) {
       await user.type(input, `记下第${index}件事{Enter}`);
       await within(dialog).findByText(`记下第${index}件事`);
@@ -4240,18 +4761,21 @@ describe("optional agent conversation", () => {
     fireEvent.keyDown(window, { key: "j", ctrlKey: true });
 
     expect(screen.queryByRole("dialog", { name: "选择日期页面" })).not.toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "对话" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
   });
 
-  it("replaces conversation with the backup menu instead of stacking input surfaces", async () => {
+  it("temporarily replaces conversation with the backup menu and restores it on close", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
     await user.click(screen.getByRole("button", { name: "打开本地备份菜单" }));
 
-    expect(screen.queryByRole("dialog", { name: "对话" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "对话工作区" })).not.toBeInTheDocument();
     expect(screen.getByRole("menu", { name: "本地备份" })).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "对话输入" }));
   });
 
   it("replaces the backup menu with conversation instead of stacking input surfaces", async () => {
@@ -4263,17 +4787,103 @@ describe("optional agent conversation", () => {
     fireEvent.keyDown(window, { key: "j", ctrlKey: true });
 
     expect(screen.queryByRole("menu", { name: "本地备份" })).not.toBeInTheDocument();
-    expect(screen.getByRole("dialog", { name: "对话" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
   });
 
-  it("replaces conversation with the date picker instead of stacking two transient papers", async () => {
+  it("returns from conversation to canvas before opening the date picker", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
-    await user.click(await screen.findByRole("button", { name: "打开对话" }));
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.click(screen.getByRole("button", { name: "画布" }));
     await user.click(screen.getByRole("button", { name: "选择日期页面" }));
 
-    expect(screen.queryByRole("dialog", { name: "对话" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "对话工作区" })).not.toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "选择日期页面" })).toBeInTheDocument();
+  });
+
+  it("does not let Ctrl J replace an agent deletion confirmation", async () => {
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository(workspaceWithTodayCard()).repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.type(screen.getByRole("textbox", { name: "对话输入" }), "删除把卡片放在时间围栏外{Enter}");
+    const confirm = screen.getByRole("dialog", { name: "删除这张卡片？" });
+
+    fireEvent.keyDown(window, { key: "j", ctrlKey: true });
+
+    expect(confirm).toBeInTheDocument();
+    expect(document.activeElement).toBe(within(confirm).getByRole("button", { name: "取消" }));
+  });
+
+  it("does not let Ctrl J replace a canvas deletion confirmation", async () => {
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository(workspaceWithTodayCard()).repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "打开卡片：把卡片放在时间围栏外" }));
+    await user.click(screen.getByRole("button", { name: "删除卡片" }));
+    const confirm = screen.getByRole("dialog", { name: "删除这张卡片？" });
+
+    fireEvent.keyDown(window, { key: "j", ctrlKey: true });
+
+    expect(confirm).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "画布" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("region", { name: "对话工作区" })).not.toBeInTheDocument();
+  });
+
+  it("does not initialize or call an agent model during app startup", async () => {
+    const interpret = vi.fn(async () => ({ type: "unsupported", message: "不应调用" } as const));
+
+    render(<App repository={trackedRepository().repository} now={() => NOW} agentModel={{ interpret }} />);
+
+    await screen.findByRole("region", { name: "今天的画布" });
+    expect(interpret).not.toHaveBeenCalled();
+  });
+});
+
+describe("application settings", () => {
+  it("opens one settings panel for appearance, Agent, and local data", async () => {
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository().repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "打开设置" }));
+
+    const dialog = screen.getByRole("dialog", { name: "应用设置" });
+    expect(within(dialog).getByRole("navigation", { name: "设置分类" })).toHaveTextContent("外观Agent数据");
+    expect(within(dialog).getByRole("group", { name: "外观模式" })).toBeInTheDocument();
+
+    await user.click(within(dialog).getByRole("button", { name: "Agent" }));
+    expect(within(dialog).getByLabelText("DeepSeek API Key")).toHaveAttribute("type", "password");
+    expect(within(dialog).getByLabelText("模型")).toHaveValue("deepseek-v4-flash");
+
+    await user.click(within(dialog).getByRole("button", { name: "数据" }));
+    expect(within(dialog).getByRole("button", { name: "导出本地备份" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "导入本地备份" })).toBeInTheDocument();
+  });
+
+  it("opens the settings panel directly on model settings from conversation", async () => {
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository().repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "对话" }));
+    await user.click(screen.getByRole("button", { name: "打开模型设置" }));
+
+    const dialog = screen.getByRole("dialog", { name: "应用设置" });
+    expect(within(dialog).getByRole("button", { name: "Agent" })).toHaveAttribute("aria-current", "page");
+    expect(within(dialog).getByLabelText("DeepSeek API Key")).toBeInTheDocument();
+  });
+
+  it("closes settings with Escape and restores the opening control", async () => {
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository().repository} now={() => NOW} />);
+
+    const trigger = await screen.findByRole("button", { name: "打开设置" });
+    await user.click(trigger);
+    expect(screen.getByRole("dialog", { name: "应用设置" })).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog", { name: "应用设置" })).not.toBeInTheDocument();
+    expect(document.activeElement).toBe(trigger);
   });
 });

@@ -24,6 +24,7 @@ import {
   CornersOut,
   DownloadSimple,
   Flag,
+  GearSix,
   HardDrive,
   MagnifyingGlass,
   Moon,
@@ -84,14 +85,20 @@ import {
   type AgentModel,
   type AgentPlan,
 } from "./agent/agentCore";
+import { harnessAgentModel } from "./agent/harnessAgent";
+import { SettingsPanel, type SettingsSection } from "./settings/SettingsPanel";
+import { createSettingsRepository, type SettingsRepository } from "./settings/settingsRepository";
+
+const defaultSettingsRepository = createSettingsRepository();
 
 export interface AppProps {
   repository: WorkspaceRepository;
   now?: () => Date;
   agentModel?: AgentModel;
+  settingsRepository?: SettingsRepository;
 }
 
-type AppView = "canvas" | "overview";
+type AppView = "canvas" | "overview" | "agent";
 type OverviewStatus = "open" | "completed";
 type PageDirection = "forward" | "backward" | "still";
 type QuickToken = string;
@@ -171,6 +178,8 @@ interface AgentReceipt {
   cardIds: string[];
   undoDepth: number;
   undone: boolean;
+  beforeWorkspace: Workspace;
+  afterWorkspace: Workspace;
 }
 
 interface AgentTurn {
@@ -179,6 +188,10 @@ interface AgentTurn {
   message: string;
   receipt?: AgentReceipt;
   candidates?: AgentCandidate[];
+  action?: {
+    type: "open-overview";
+    status: OverviewStatus;
+  };
 }
 
 interface CanvasCardActionHandlers {
@@ -295,6 +308,14 @@ function focusLater(preferred: HTMLElement | null, fallback?: HTMLElement | null
     if (preferred?.isConnected) preferred.focus();
     else if (fallback?.isConnected) fallback.focus();
   }, 0);
+}
+
+function sameWorkspaceSnapshot(first: Workspace, second: Workspace): boolean {
+  if (first === second) return true;
+  // Workspace is a JSON-shaped, immutable snapshot. The identity fast path
+  // covers the normal reducer/undo route; serialization also handles an
+  // equivalent snapshot restored through a repository boundary.
+  return JSON.stringify(first) === JSON.stringify(second);
 }
 
 function hasFocusablePointerTarget(target: Element | null): boolean {
@@ -545,7 +566,14 @@ function areaPosition(
   ))) ?? candidates[occupied.length % candidates.length];
 }
 
-export function App({ repository, now = systemNow, agentModel = localAgentModel }: AppProps) {
+const defaultAgentModel: AgentModel = import.meta.env.MODE === "test" ? localAgentModel : harnessAgentModel;
+
+export function App({
+  repository,
+  now = systemNow,
+  agentModel = defaultAgentModel,
+  settingsRepository = defaultSettingsRepository,
+}: AppProps) {
   const searchShortcut = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform)
     ? "⌘ K"
     : "Ctrl K";
@@ -589,33 +617,49 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
   const [backupMenuOpen, setBackupMenuOpen] = useState(false);
   const [pendingImportWorkspace, setPendingImportWorkspace] = useState<Workspace | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const [visibleViewport, setVisibleViewportState] = useState<Viewport | null>(null);
   const [cardMotions, setCardMotions] = useState<Map<string, CanvasCardMotion>>(() => new Map());
   const [completingCardIds, setCompletingCardIds] = useState<Set<string>>(() => new Set());
   const [dragPreview, setDragPreview] = useState<DragPreview | null>(null);
   const [enteringAreaIds, setEnteringAreaIds] = useState<Set<string>>(() => new Set());
   const [captureNotice, setCaptureNotice] = useState<string | null>(null);
-  const [agentOpen, setAgentOpen] = useState(false);
   const [agentDraft, setAgentDraft] = useState("");
   const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
   const [agentBusy, setAgentBusy] = useState(false);
   const [pendingAgentPlan, setPendingAgentPlan] = useState<AgentPlan | null>(null);
+  const [agentSelectedId, setAgentSelectedId] = useState<string | null>(null);
+  const [agentCandidateIndex, setAgentCandidateIndex] = useState(0);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
   const captureRef = useRef<HTMLInputElement>(null);
   const agentInputRef = useRef<HTMLInputElement>(null);
   const agentTurnsRef = useRef<HTMLDivElement>(null);
-  const agentTriggerRef = useRef<HTMLButtonElement>(null);
-  const agentReturnFocusRef = useRef<HTMLElement | null>(null);
   const agentTurnIdRef = useRef(0);
   const agentRequestVersionRef = useRef(0);
+  const agentSceneRevisionRef = useRef(0);
   const agentContextRef = useRef({
     currentPage,
     view,
     selectedId,
     overviewStatus,
+    sceneRevision: 0,
   });
+  // Async Agent callbacks can outlive the render that started them. Keep the
+  // latest UI context in refs so a response uses the visible view and
+  // inspector instead of a stale closure.
+  const currentPageRef = useRef(currentPage);
+  const viewRef = useRef<AppView>(view);
+  const selectedIdRef = useRef<string | null>(selectedId);
+  const agentSelectedIdRef = useRef<string | null>(agentSelectedId);
+  const undoCountRef = useRef(undoCount);
+  currentPageRef.current = currentPage;
+  viewRef.current = view;
+  selectedIdRef.current = selectedId;
+  agentSelectedIdRef.current = agentSelectedId;
+  undoCountRef.current = undoCount;
   const agentConfirmDialogRef = useRef<HTMLElement>(null);
   const inspectorTitleRef = useRef<HTMLTextAreaElement>(null);
   const inspectorDateRef = useRef<HTMLInputElement>(null);
@@ -630,9 +674,12 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
   const areaMoveRefs = useRef(new Map<string, HTMLButtonElement>());
   const overviewRowRefs = useRef(new Map<string, HTMLLIElement>());
   const searchResultRefs = useRef(new Map<string, HTMLButtonElement>());
+  const agentCandidateRefs = useRef(new Map<string, HTMLButtonElement>());
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const datePickerTriggerRef = useRef<HTMLButtonElement>(null);
   const backupTriggerRef = useRef<HTMLButtonElement>(null);
+  const settingsTriggerRef = useRef<HTMLButtonElement>(null);
+  const settingsReturnFocusRef = useRef<HTMLElement | null>(null);
   const undoTriggerRef = useRef<HTMLButtonElement>(null);
   const backupMenuRef = useRef<HTMLDivElement>(null);
   const deleteTriggerRef = useRef<HTMLButtonElement>(null);
@@ -659,6 +706,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
   const areaTitleDraftRef = useRef("");
   const selectNewAreaTitleRef = useRef<string | null>(null);
   const captureComposingRef = useRef(false);
+  const agentComposingRef = useRef(false);
   const visibleViewportRef = useRef<Viewport | null>(null);
   const pageViewportsRef = useRef(new Map<CanvasPageKey, Viewport>());
   const initialDateViewportAppliedRef = useRef(false);
@@ -721,6 +769,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     [workspace],
   );
   const selectedCard = workspace?.cards.find((card) => card.id === selectedId) ?? null;
+  const agentSelectedCard = workspace?.cards.find((card) => card.id === agentSelectedId && card.status !== "deleted") ?? null;
   const selectedArea = workspace?.areas.find((area) => area.id === selectedAreaId) ?? null;
   const visiblePlacements = useMemo(
     () => workspace?.placements.filter((placement) => placement.pageKey === currentPage) ?? [],
@@ -756,7 +805,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     return workspace.placements.filter((placement) => placement.pageKey === previousDate
       && openCardIds.has(placement.cardId)).length;
   }, [currentPage, openCards, previousDate, workspace]);
-  const suggestions = captureComposing || suggestionsDismissed || agentOpen ? [] : quickSuggestions(capture);
+  const suggestions = captureComposing || suggestionsDismissed || view === "agent" ? [] : quickSuggestions(capture);
   const searchResults = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase("zh-CN");
     if (!query) return [];
@@ -842,18 +891,42 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
   }, [currentPage, workspace]);
 
   useEffect(() => {
-    agentContextRef.current = { currentPage, view, selectedId, overviewStatus };
-  }, [currentPage, overviewStatus, selectedId, view]);
+    const previous = agentContextRef.current;
+    if (previous.currentPage !== currentPage
+      || previous.selectedId !== agentSelectedId
+      || previous.overviewStatus !== overviewStatus) {
+      agentSceneRevisionRef.current += 1;
+    }
+    agentContextRef.current = {
+      currentPage,
+      view,
+      // The Agent's selected-card reference is session context, not the
+      // currently mounted inspector. Switching to canvas or overview closes
+      // that inspector, but must not make an in-flight request lose its
+      // target. A deliberate Card selection updates agentSelectedId below.
+      selectedId: agentSelectedId,
+      overviewStatus,
+      sceneRevision: agentSceneRevisionRef.current,
+    };
+  }, [agentSelectedId, currentPage, overviewStatus, view]);
 
   useEffect(() => {
-    if (!agentOpen) return;
+    if (view !== "agent") return;
     const turns = agentTurnsRef.current;
     if (!turns || typeof turns.scrollTo !== "function") return;
     turns.scrollTo({
       top: turns.scrollHeight,
       behavior: reduceMotionRequested() ? "auto" : "smooth",
     });
-  }, [agentBusy, agentOpen, agentTurns.length, pendingAgentPlan]);
+  }, [agentBusy, agentTurns.length, pendingAgentPlan, view]);
+
+  // The capture bar remains mounted while the Agent panel overlays the canvas.
+  // Restore the ordinary capture focus explicitly when returning to the canvas;
+  // `autoFocus` only runs when an input is first mounted.
+  useEffect(() => {
+    if (view !== "canvas") return;
+    focusLater(captureRef.current);
+  }, [view]);
 
   useEffect(() => {
     let midnightTimer: number | null = null;
@@ -971,7 +1044,8 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
       const target = event.target as HTMLElement | null;
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "j") {
         event.preventDefault();
-        openAgent(target);
+        if (settingsOpen) return;
+        switchPrimaryView("agent");
         return;
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
@@ -982,7 +1056,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLocaleLowerCase() === "z"
         && !target?.matches("input, textarea, select")) {
         event.preventDefault();
-        if (searchOpen || agentOpen || datePickerOpen || backupMenuOpen || deleteConfirmOpen || pendingImportWorkspace) return;
+        if (settingsOpen || searchOpen || view === "agent" || datePickerOpen || backupMenuOpen || deleteConfirmOpen || pendingImportWorkspace) return;
         undoLastChange();
         return;
       }
@@ -996,9 +1070,9 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
         closeSearch();
       }
       else if (pendingAgentPlan) cancelPendingAgentPlan();
-      else if (agentOpen) closeAgent();
       else if (pendingImportWorkspace) closeImportConfirm();
       else if (deleteConfirmOpen) closeDeleteConfirm();
+      else if (view === "agent") focusLater(agentInputRef.current);
       else if (datePickerOpen) closeDatePicker();
       else if (backupMenuOpen) closeBackupMenu();
       else if (interactionActive()) cancelInteraction();
@@ -1020,7 +1094,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
       window.removeEventListener("keyup", keyUp);
       window.removeEventListener("blur", releaseSpace);
     };
-  }, [agentOpen, backupMenuOpen, cancelInteraction, currentPage, datePickerOpen, deleteConfirmOpen, interactionActive, pendingAgentPlan, pendingImportWorkspace, searchOpen, selectedAreaId, selectedId, shownDate, undoWorkspace]);
+  }, [backupMenuOpen, cancelInteraction, currentPage, datePickerOpen, deleteConfirmOpen, interactionActive, pendingAgentPlan, pendingImportWorkspace, searchOpen, selectedAreaId, selectedId, settingsOpen, shownDate, undoWorkspace, view]);
 
   function setMotion(cardId: string, motion: CanvasCardMotion, duration = 220) {
     if (reduceMotionRequested()) return;
@@ -1095,7 +1169,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
   }
 
   function viewportForPage(pageKey: CanvasPageKey): Viewport {
-    if (pageKey === currentPage) return viewportForInteraction();
+    if (pageKey === currentPageRef.current) return viewportForInteraction();
     return pageViewportsRef.current.get(pageKey) ?? viewportForInteraction();
   }
 
@@ -1134,7 +1208,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
   }
 
   function rememberCurrentPageViewport() {
-    pageViewportsRef.current.set(currentPage, viewportForInteraction());
+    pageViewportsRef.current.set(currentPageRef.current, viewportForInteraction());
   }
 
   function revealPendingCapture(pageKey: CanvasPageKey, viewport: Viewport) {
@@ -1201,18 +1275,29 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
   }
 
   function switchPrimaryView(nextView: AppView) {
-    if (nextView === view) return;
+    if (deleteConfirmOpen || pendingImportWorkspace || pendingAgentPlan?.kind === "confirm-destructive") return;
+    if (nextView === view) {
+      if (nextView === "agent") {
+        if (searchOpen) closeSearch(false);
+        if (backupMenuOpen) closeBackupMenu(false);
+        if (datePickerOpen) closeDatePicker(false);
+        window.setTimeout(() => agentInputRef.current?.focus(), 0);
+      }
+      return;
+    }
+    if (nextView === "agent") {
+      const targetId = selectedId ?? agentSelectedId;
+      if (targetId) {
+        agentSelectedIdRef.current = targetId;
+        setAgentSelectedId(targetId);
+      }
+    }
     closeTransientInspectorContext();
-    // The conversation is a temporary operation layer, not a third primary
-    // view. A user-selected Canvas / Overview transition therefore ends the
-    // old conversation context without restoring focus to its trigger. Agent
-    // initiated navigation uses setView directly and keeps its receipt visible.
-    if (agentOpen) closeAgent(false);
-    // A page picker belongs to the canvas navigation surface. Clear it when
-    // leaving that surface so it cannot reappear unexpectedly on the next
-    // return to Canvas. Keep the clicked view control focused instead of
-    // restoring the dismissed picker trigger.
     if (datePickerOpen) closeDatePicker(false);
+    if (searchOpen) closeSearch(false);
+    if (backupMenuOpen) closeBackupMenu(false);
+    if (nextView === "agent") setSuggestionsDismissed(true);
+    else setSuggestionsDismissed(false);
     if (nextView === "canvas") {
       const revealed = revealPendingCapture(currentPage, viewportForInteraction());
       if (revealed.consumed) applyVisibleViewport(revealed.viewport);
@@ -2165,9 +2250,9 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     }));
   }
 
-  function workspaceWithSelectedCardDrafts(source: Workspace): Workspace {
-    if (!selectedId) return source;
-    const card = source.cards.find((item) => item.id === selectedId);
+  function workspaceWithSelectedCardDrafts(source: Workspace, cardId = selectedIdRef.current): Workspace {
+    if (!cardId) return source;
+    const card = source.cards.find((item) => item.id === cardId);
     if (!card) return source;
     const patch: Partial<Pick<Card, "title" | "notes">> = {};
     const title = titleDraftRef.current.trim();
@@ -2176,7 +2261,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     if (Object.keys(patch).length === 0) return source;
     return workspaceReducer(source, {
       type: "update-card",
-      cardId: selectedId,
+      cardId,
       patch,
       now: now(),
     });
@@ -2229,6 +2314,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     message: string,
     receipt?: AgentReceipt,
     candidates?: AgentCandidate[],
+    action?: AgentTurn["action"],
   ) {
     const turn: AgentTurn = {
       id: agentTurnIdRef.current + 1,
@@ -2236,44 +2322,10 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
       message,
       receipt,
       candidates,
+      action,
     };
     agentTurnIdRef.current = turn.id;
     setAgentTurns((turns) => [...turns, turn].slice(-AGENT_TURN_LIMIT));
-  }
-
-  function openAgent(returnTarget?: HTMLElement | null) {
-    if (deleteConfirmOpen || pendingImportWorkspace) return;
-    if (agentOpen) {
-      focusLater(agentInputRef.current);
-      return;
-    }
-    if (searchOpen) closeSearch(false);
-    if (datePickerOpen) closeDatePicker(false);
-    if (backupMenuOpen) closeBackupMenu(false);
-    const requestedTarget = returnTarget instanceof HTMLElement
-      && returnTarget !== document.body
-      && returnTarget !== document.documentElement
-      ? returnTarget
-      : null;
-    agentReturnFocusRef.current = requestedTarget
-      ?? (document.activeElement instanceof HTMLElement && document.activeElement !== document.body
-        ? document.activeElement
-        : agentTriggerRef.current);
-    setSuggestionsDismissed(true);
-    setAgentOpen(true);
-  }
-
-  function closeAgent(restoreFocus = true) {
-    agentRequestVersionRef.current += 1;
-    setAgentOpen(false);
-    setAgentDraft("");
-    setAgentTurns([]);
-    setAgentBusy(false);
-    setPendingAgentPlan(null);
-    setSuggestionsDismissed(false);
-    const returnTarget = agentReturnFocusRef.current;
-    agentReturnFocusRef.current = null;
-    if (restoreFocus) focusLater(returnTarget, agentTriggerRef.current ?? captureRef.current);
   }
 
   function cancelPendingAgentPlan() {
@@ -2325,21 +2377,35 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
   function runAgentPlan(plan: AgentPlan, confirmed = false) {
     const visibleCurrent = workspaceRef.current ?? workspace;
     if (!visibleCurrent) return;
+    const activeView = viewRef.current;
+    const activePage = currentPageRef.current;
+    const activeSelectedId = selectedIdRef.current;
+    const activeAgentSelectedId = agentSelectedIdRef.current;
     if (plan.kind !== "execute" && !confirmed) {
-      appendAgentTurn("agent", plan.message, undefined, plan.kind === "show" ? plan.candidates : undefined);
+      appendAgentTurn(
+        "agent",
+        plan.message,
+        undefined,
+        plan.kind === "show" ? plan.candidates : undefined,
+        plan.kind === "show" && plan.sourceIntent.type === "list"
+          ? { type: "open-overview", status: plan.sourceIntent.status }
+          : undefined,
+      );
       if (plan.kind === "clarify" || plan.kind === "confirm" || plan.kind === "confirm-destructive") {
+        if (plan.kind === "clarify") setAgentCandidateIndex(0);
         setPendingAgentPlan(plan);
       } else if (plan.kind === "show" && plan.sourceIntent.type === "open") {
         const card = visibleCurrent.cards.find((item) => item.id === plan.cardIds[0]);
         if (card) openSearchResult(card);
-      } else if (plan.kind === "show" && plan.sourceIntent.type === "list") {
-        closeTransientInspectorContext();
-        setView("overview");
-        setOverviewStatus(plan.sourceIntent.status);
       }
       return;
     }
-    const current = workspaceWithSelectedCardDrafts(visibleCurrent);
+    const current = workspaceWithSelectedCardDrafts(visibleCurrent, activeSelectedId);
+    // commitWorkspace records the workspace currently held by the controller
+    // as the undo predecessor. Keep that exact snapshot for the receipt; the
+    // draft-enriched `current` can be a derived object when an Inspector is
+    // still being edited.
+    const beforeWorkspace = workspaceRef.current ?? visibleCurrent;
     setPendingAgentPlan(null);
     const result = executeAgentPlan(current, plan, {
       now: now(),
@@ -2351,48 +2417,41 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
       appendAgentTurn("agent", "现在没有处理成功，画布没有变化。");
       return;
     }
-    const followedSchedule = plan.operations.length === 1
-      && plan.operations[0].type === "schedule"
-      && plan.operations[0].cardId === selectedId
-      && result.workspace.cards.some((card) => card.id === selectedId && card.status === "open")
-      ? plan.operations[0]
-      : null;
-    let nextWorkspace = result.workspace;
-    const followedPlacement = followedSchedule
-      ? nextWorkspace.placements.find((placement) => placement.cardId === followedSchedule.cardId)
-      : null;
-    if (followedPlacement && followedPlacement.pageKey !== LOOSE_PAGE_KEY) {
-      const targetViewport = viewportForPage(followedPlacement.pageKey);
-      const targetSurface = {
-        width: stageRef.current?.clientWidth || 1200,
-        height: stageRef.current?.clientHeight || 760,
-      };
-      const revealedViewport = revealDateCardViewport(followedPlacement, targetViewport, targetSurface);
-      if (revealedViewport.x !== targetViewport.x || revealedViewport.y !== targetViewport.y) {
-        nextWorkspace = workspaceReducer(nextWorkspace, {
-          type: "update-viewport",
-          viewport: revealedViewport,
-          now: now(),
-        });
-        pageViewportsRef.current.set(followedPlacement.pageKey, revealedViewport);
-        if (followedPlacement.pageKey === currentPage) applyVisibleViewport(revealedViewport);
-      }
-    }
+    const nextWorkspace = result.workspace;
     const completedIds = plan.operations.flatMap((operation) => operation.type === "set-status"
       && operation.status === "completed"
       ? [operation.cardId]
       : []);
-    if (completedIds.includes(selectedId ?? "")) {
+    if (completedIds.includes(activeSelectedId ?? "")) {
       setSelectedId(null);
+      selectedIdRef.current = null;
       inspectorReturnFocusRef.current = null;
     }
     const deletedIds = plan.operations.flatMap((operation) => operation.type === "delete" ? [operation.cardId] : []);
-    if (deletedIds.includes(selectedId ?? "")) {
+    if (deletedIds.includes(activeSelectedId ?? "") || deletedIds.includes(activeAgentSelectedId ?? "")) {
       setSelectedId(null);
+      selectedIdRef.current = null;
+      setAgentSelectedId(null);
+      agentSelectedIdRef.current = null;
       inspectorReturnFocusRef.current = null;
     }
-    const nextSelectedCard = selectedId
-      ? nextWorkspace.cards.find((card) => card.id === selectedId && card.status === "open")
+    // A successful single-card action establishes that card as the next
+    // conversational referent. This keeps a follow-up such as “这个做完了”
+    // attached to the card the Agent just created or changed, even when the
+    // canvas/inspector is not mounted in the current view. Batch actions do
+    // not choose an arbitrary referent, and deleted cards are cleared above.
+    if (plan.kind === "execute"
+      && result.affectedCardIds.length === 1
+      && !deletedIds.includes(result.affectedCardIds[0])) {
+      const affectedCardId = result.affectedCardIds[0];
+      const affectedCard = nextWorkspace.cards.find((card) => card.id === affectedCardId && card.status !== "deleted");
+      if (affectedCard) {
+        agentSelectedIdRef.current = affectedCardId;
+        setAgentSelectedId(affectedCardId);
+      }
+    }
+    const nextSelectedCard = activeSelectedId
+      ? nextWorkspace.cards.find((card) => card.id === activeSelectedId && card.status === "open")
       : null;
     if (nextSelectedCard) {
       titleDraftRef.current = nextSelectedCard.title;
@@ -2402,46 +2461,46 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     }
     completedIds.forEach((cardId) => {
       const placement = current.placements.find((item) => item.cardId === cardId);
-      if (!placement || placement.pageKey !== currentPage || view !== "canvas" || reduceMotionRequested()) return;
+      if (!placement || placement.pageKey !== activePage || activeView !== "canvas" || reduceMotionRequested()) return;
       setCompletingCardIds((ids) => new Set(ids).add(cardId));
       const timer = window.setTimeout(() => finishCardCompletion(cardId), 260);
       completionTimersRef.current.set(cardId, timer);
     });
     commitWorkspace(nextWorkspace, { undo: true });
-    result.affectedCardIds.forEach((cardId) => {
+    // Only spatial actions create a new visual location. Metadata edits and
+    // status changes must not look like a card was dropped or cause a later
+    // page visit to reveal an already-known card.
+    const spatialCardIds = new Set([
+      ...result.createdCardIds,
+      ...plan.operations
+        .filter((operation): operation is Extract<typeof operation, { type: "schedule" }> => operation.type === "schedule")
+        .map((operation) => operation.cardId),
+    ]);
+    result.affectedCardIds.filter((cardId) => spatialCardIds.has(cardId)).forEach((cardId) => {
       const placement = nextWorkspace.placements.find((item) => item.cardId === cardId);
       const card = nextWorkspace.cards.find((item) => item.id === cardId);
       if (!placement || card?.status !== "open") return;
-      if (placement.pageKey !== currentPage || view !== "canvas") {
+      if (placement.pageKey !== activePage || activeView !== "canvas") {
         pendingCaptureRevealRef.current.set(placement.pageKey, cardId);
       } else {
         setMotion(cardId, result.createdCardIds.includes(cardId) ? "entering" : "dropping");
       }
     });
-    if (followedPlacement) {
-      setView("canvas");
-      if (followedPlacement.pageKey === LOOSE_PAGE_KEY) {
-        openLoosePage(true);
-      } else {
-        openDatePage(
-          followedPlacement.pageKey,
-          followedPlacement.pageKey > shownDate ? "forward" : "backward",
-          true,
-        );
-      }
-    }
     const resultMessage = confirmed
       ? plan.kind === "confirm-destructive" ? "已经删除。" : "好，已经处理好了。"
       : plan.message;
     appendAgentTurn("agent", resultMessage, {
       cardIds: result.affectedCardIds,
-      undoDepth: undoCount + 1,
+      undoDepth: undoCountRef.current + 1,
       undone: false,
+      beforeWorkspace,
+      afterWorkspace: nextWorkspace,
     });
   }
 
   async function submitAgent(event: FormEvent) {
     event.preventDefault();
+    if (agentComposingRef.current) return;
     const request = agentDraft.trim();
     const current = workspaceRef.current ?? workspace;
     if (!request || !current || agentBusy || pendingAgentPlan) return;
@@ -2450,9 +2509,11 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     const context = {
       now: now(),
       currentPage,
-      selectedCardId: selectedId,
+      selectedCardId: agentSelectedIdRef.current,
       view,
       overviewStatus,
+      workspace: current,
+      sceneRevision: agentSceneRevisionRef.current,
     } as const;
     const requestVersion = agentRequestVersionRef.current + 1;
     agentRequestVersionRef.current = requestVersion;
@@ -2461,11 +2522,10 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
       const intent = await agentModel.interpret(request, context);
       if (agentRequestVersionRef.current !== requestVersion) return;
       const latestContext = agentContextRef.current;
-      if (latestContext.currentPage !== context.currentPage
-        || latestContext.view !== context.view
+      if (latestContext.sceneRevision !== context.sceneRevision
+        || latestContext.currentPage !== context.currentPage
         || latestContext.selectedId !== context.selectedCardId
-        || latestContext.overviewStatus !== context.overviewStatus
-        || (workspaceRef.current ?? workspace) !== current) {
+        || latestContext.overviewStatus !== context.overviewStatus) {
         appendAgentTurn("agent", "当前现场已经变化，这次没有执行。画布没有变化。");
         return;
       }
@@ -2480,17 +2540,60 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     }
   }
 
+  function handleAgentCompositionStart() {
+    agentComposingRef.current = true;
+  }
+
+  function handleAgentCompositionEnd() {
+    agentComposingRef.current = false;
+  }
+
+  function handleAgentKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
+    // Let the IME own Enter while composition is active. The form submit
+    // guard still prevents a premature Agent request, while preserving the
+    // platform's composition-confirmation behavior.
+    if (agentComposingRef.current || event.nativeEvent.isComposing) return;
+  }
+
+  function handleAgentCandidateKeyDown(
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    index: number,
+    candidates: AgentCandidate[],
+  ) {
+    if (candidates.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      const next = event.key === "Home"
+        ? 0
+        : event.key === "End"
+          ? candidates.length - 1
+          : (index + (event.key === "ArrowDown" ? 1 : -1) + candidates.length) % candidates.length;
+      setAgentCandidateIndex(next);
+      agentCandidateRefs.current.get(candidates[next].id)?.focus();
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      chooseAgentCandidate(candidates[index].id);
+    }
+  }
+
   function chooseAgentCandidate(cardId: string) {
     const current = workspaceRef.current ?? workspace;
     if (!current || pendingAgentPlan?.kind !== "clarify") return;
     const context = {
       now: now(),
       currentPage,
-      selectedCardId: selectedId,
+      selectedCardId: agentSelectedIdRef.current,
       view,
       overviewStatus,
+      workspace: current,
+      sceneRevision: agentSceneRevisionRef.current,
     } as const;
     const intent = retargetAgentIntent(pendingAgentPlan.sourceIntent, cardId);
+    // Choosing a candidate is an explicit user selection. Keep that stable
+    // card as the next conversational referent so a following “这个” uses
+    // the card the user just picked, not an older inspector target.
+    agentSelectedIdRef.current = cardId;
+    setAgentSelectedId(cardId);
     setPendingAgentPlan(null);
     runAgentPlan(prepareAgentPlan(intent, current, context));
   }
@@ -2503,7 +2606,25 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
 
   function undoAgentAction(turnId: number, receipt: AgentReceipt) {
     if (receipt.undone) return;
-    if (undoCount !== receipt.undoDepth) {
+    const current = workspaceRef.current ?? workspace;
+    if (current && sameWorkspaceSnapshot(current, receipt.beforeWorkspace)) {
+      const undoTurnId = agentTurnIdRef.current + 1;
+      agentTurnIdRef.current = undoTurnId;
+      setAgentTurns((turns) => [
+        ...turns.map((turn) => turn.id === turnId && turn.receipt
+          ? { ...turn, receipt: { ...turn.receipt, undone: true } }
+          : turn),
+        {
+          id: undoTurnId,
+          role: "agent" as const,
+          message: "这次操作已经撤销。",
+        },
+      ].slice(-AGENT_TURN_LIMIT));
+      return;
+    }
+    if (!current
+      || !sameWorkspaceSnapshot(current, receipt.afterWorkspace)
+      || undoCount !== receipt.undoDepth) {
       appendAgentTurn("agent", "这次操作之后已有新的更改，请使用画布上的撤销。");
       return;
     }
@@ -2512,22 +2633,67 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
       appendAgentTurn("agent", "现在无法撤销这次操作，画布没有变化。");
       return;
     }
+    // Undo restores the exact workspace snapshot. If that snapshot still
+    // contains the single card represented by this receipt, keep it as the
+    // next conversational referent (for example: delete → undo → “这个完成
+    // 了”). If undo removed a newly-created card, clear the now-stale target.
+    if (receipt.cardIds.length === 1) {
+      const restoredCardId = receipt.cardIds[0];
+      const restoredCard = restored.cards.find((card) => card.id === restoredCardId && card.status !== "deleted");
+      if (restoredCard) {
+        agentSelectedIdRef.current = restoredCardId;
+        setAgentSelectedId(restoredCardId);
+      } else if (agentSelectedIdRef.current === restoredCardId) {
+        agentSelectedIdRef.current = null;
+        setAgentSelectedId(null);
+      }
+    }
+    // Allocate the turn id before scheduling the state updater. The updater
+    // may run after a follow-up submit; reading the mutable ref inside it
+    // would then reuse the follow-up's id and make React reconcile duplicate
+    // message keys.
+    const undoTurnId = agentTurnIdRef.current + 1;
+    agentTurnIdRef.current = undoTurnId;
     setAgentTurns((turns) => [
       ...turns.map((turn) => turn.id === turnId && turn.receipt
         ? { ...turn, receipt: { ...turn.receipt, undone: true } }
         : turn),
       {
-        id: agentTurnIdRef.current + 1,
+        id: undoTurnId,
         role: "agent" as const,
         message: "刚才的更改已经撤销。",
       },
     ].slice(-AGENT_TURN_LIMIT));
-    agentTurnIdRef.current += 1;
+  }
+
+  function changeTheme(next: "light" | "dark") {
+    setTheme(next);
+    localStorage.setItem("citroam.theme", next);
+  }
+
+  function openSettings(section: SettingsSection, returnTarget?: HTMLElement | null) {
+    if (deleteConfirmOpen || pendingImportWorkspace || pendingAgentPlan?.kind === "confirm-destructive") return;
+    if (searchOpen) closeSearch(false);
+    if (datePickerOpen) closeDatePicker(false);
+    if (backupMenuOpen) closeBackupMenu(false);
+    settingsReturnFocusRef.current = returnTarget
+      ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null)
+      ?? settingsTriggerRef.current;
+    setSuggestionsDismissed(true);
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  }
+
+  function closeSettings(restoreFocus = true) {
+    setSettingsOpen(false);
+    setSuggestionsDismissed(false);
+    const returnTarget = settingsReturnFocusRef.current;
+    settingsReturnFocusRef.current = null;
+    if (restoreFocus) focusLater(returnTarget, settingsTriggerRef.current ?? captureRef.current);
   }
 
   function openSearch(returnTarget?: HTMLElement | null) {
-    if (deleteConfirmOpen || pendingImportWorkspace || pendingAgentPlan?.kind === "confirm-destructive" || searchOpen) return;
-    if (agentOpen) closeAgent(false);
+    if (settingsOpen || deleteConfirmOpen || pendingImportWorkspace || pendingAgentPlan?.kind === "confirm-destructive" || searchOpen) return;
     if (datePickerOpen) closeDatePicker(false);
     if (backupMenuOpen) closeBackupMenu(false);
     const candidate = returnTarget && returnTarget !== document.body && returnTarget !== document.documentElement
@@ -2549,7 +2715,13 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     setActiveSearchResult(0);
     const returnTarget = searchReturnFocusRef.current;
     searchReturnFocusRef.current = null;
-    if (restoreFocus) focusLater(returnTarget, searchTriggerRef.current ?? captureRef.current);
+    if (restoreFocus) {
+      window.setTimeout(() => {
+        if (returnTarget?.isConnected) returnTarget.focus();
+        else if (view === "agent") agentInputRef.current?.focus();
+        else (searchTriggerRef.current ?? captureRef.current)?.focus();
+      }, 0);
+    }
   }
 
   function toggleDatePicker(trigger: HTMLElement) {
@@ -2558,7 +2730,6 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
       return;
     }
     if (searchOpen) closeSearch(false);
-    if (agentOpen) closeAgent(false);
     if (backupMenuOpen) closeBackupMenu(false);
     datePickerReturnFocusRef.current = trigger;
     setDatePickerOpen(true);
@@ -2577,7 +2748,6 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
       return;
     }
     if (searchOpen) closeSearch(false);
-    if (agentOpen) closeAgent(false);
     if (datePickerOpen) closeDatePicker(false);
     setBackupMenuOpen(true);
     window.setTimeout(() => {
@@ -2587,7 +2757,12 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
 
   function closeBackupMenu(restoreFocus = true) {
     setBackupMenuOpen(false);
-    if (restoreFocus) focusLater(backupTriggerRef.current, captureRef.current);
+    if (restoreFocus) {
+      window.setTimeout(() => {
+        if (view === "agent") agentInputRef.current?.focus();
+        else (backupTriggerRef.current ?? captureRef.current)?.focus();
+      }, 0);
+    }
   }
 
   function handleBackupMenuKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
@@ -2616,6 +2791,10 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     inspectorReturnFocusRef.current = returnTarget ?? cardOpenRefs.current.get(cardId) ?? null;
     setSelectedAreaId(null);
     setSelectedId(cardId);
+    // Keep the Agent's explicit target aligned with the user's latest Card
+    // selection even when the Agent workspace is currently unmounted.
+    agentSelectedIdRef.current = cardId;
+    setAgentSelectedId(cardId);
   }
 
   function closeInspector() {
@@ -2647,7 +2826,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     if (restoreFocus) focusLater(returnTarget, captureRef.current);
   }
 
-  function exportWorkspaceBackup() {
+  function exportWorkspaceBackup(restoreMenuFocus = true) {
     if (!workspace || typeof URL.createObjectURL !== "function") return;
     const blob = new Blob([JSON.stringify(workspace, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
@@ -2656,7 +2835,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     link.download = `citroam-backup-${getLocalDateKey(now())}.json`;
     link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    closeBackupMenu();
+    closeBackupMenu(restoreMenuFocus);
     showCaptureNotice("备份已经导出");
   }
 
@@ -2869,6 +3048,10 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     const current = workspaceRef.current ?? workspace;
     commitWorkspace(workspaceReducer(current, { type: "delete-card", cardId: selectedId, now: now() }), { undo: true });
     setSelectedId(null);
+    if (agentSelectedIdRef.current === selectedId) {
+      agentSelectedIdRef.current = null;
+      setAgentSelectedId(null);
+    }
     closeDeleteConfirm(false);
     focusLater(captureRef.current);
   }
@@ -2890,6 +3073,12 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
     if (!current) return;
     const card = current.cards.find((item) => item.id === cardId);
     if (!card) return;
+    // A result can be opened from the Agent view even when the card is
+    // completed and therefore has no canvas Inspector. Keep the explicit
+    // result target as the next conversational referent so “这个恢复” (or
+    // another direct follow-up) still addresses the card the user just chose.
+    agentSelectedIdRef.current = cardId;
+    setAgentSelectedId(cardId);
     // Completed Cards do not have a visible canvas surface. Keep result
     // actions truthful by opening the completed overview instead of sending
     // the user to an empty/hidden canvas detail.
@@ -3000,6 +3189,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
         <nav className="canvas-view-switch" aria-label="主要视图">
           <button type="button" aria-label="画布" aria-pressed={view === "canvas"} onClick={() => switchPrimaryView("canvas")}>画布</button>
           <button type="button" aria-label="总览" aria-pressed={view === "overview"} onClick={() => switchPrimaryView("overview")}>总览</button>
+          <button type="button" aria-label="对话" aria-pressed={view === "agent"} onClick={() => switchPrimaryView("agent")}>对话</button>
         </nav>
         <button className="canvas-search-button" ref={searchTriggerRef} type="button" aria-label="搜索卡片" title="搜索卡片" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={(event) => openSearch(event.currentTarget)}>
           <MagnifyingGlass size={15} /><span>找一张卡片...</span><kbd>{searchShortcut}</kbd>
@@ -3012,7 +3202,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
             <button className="canvas-icon-button canvas-backup-trigger" ref={backupTriggerRef} type="button" aria-label={backupMenuOpen ? "关闭本地备份菜单" : "打开本地备份菜单"} aria-haspopup="menu" aria-expanded={backupMenuOpen} title="本地备份" onClick={openBackupMenu}><HardDrive size={17} /></button>
             {backupMenuOpen && (
               <div className="canvas-backup-menu" ref={backupMenuRef} role="menu" aria-label="本地备份" onKeyDown={handleBackupMenuKeyDown}>
-                <button type="button" role="menuitem" onClick={exportWorkspaceBackup}><DownloadSimple size={15} />导出本地备份</button>
+                <button type="button" role="menuitem" onClick={() => exportWorkspaceBackup()}><DownloadSimple size={15} />导出本地备份</button>
                 <button type="button" role="menuitem" onClick={beginImportWorkspaceBackup}><UploadSimple size={15} />导入本地备份</button>
               </div>
             )}
@@ -3023,17 +3213,23 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
             type="button"
             aria-label={theme === "light" ? "切换到深色模式" : "切换到浅色模式"}
             title={theme === "light" ? "切换到深色模式" : "切换到浅色模式"}
-            onClick={() => {
-              const next = theme === "light" ? "dark" : "light";
-              setTheme(next);
-              localStorage.setItem("citroam.theme", next);
-            }}
+            onClick={() => changeTheme(theme === "light" ? "dark" : "light")}
           >{theme === "light" ? <Moon size={17} /> : <Sun size={17} />}</button>
+          <button
+            className="canvas-icon-button"
+            ref={settingsTriggerRef}
+            type="button"
+            aria-label="打开设置"
+            title="设置"
+            aria-haspopup="dialog"
+            aria-expanded={settingsOpen}
+            onClick={(event) => openSettings("appearance", event.currentTarget)}
+          ><GearSix size={17} /></button>
         </div>
       </header>
 
       <main className="canvas-main">
-        <nav className="canvas-page-nav" hidden={view !== "canvas"} aria-label="日期页面导航">
+        <nav className="canvas-page-nav" hidden={view === "overview"} aria-label="日期页面导航">
           <button className="canvas-loose-tab" type="button" aria-label="打开随手页" aria-pressed={currentPage === LOOSE_PAGE_KEY} onClick={() => openLoosePage()}>随手页</button>
           <span className="canvas-page-nav-divider" />
           <button type="button" aria-label="前一天" title="前一天" onClick={() => navigateDate(-1)}><CaretLeft size={16} weight="bold" /></button>
@@ -3047,7 +3243,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
           )}
         </nav>
 
-        {datePickerOpen && view === "canvas" && (
+        {datePickerOpen && view !== "overview" && (
           <section className="canvas-page-picker" ref={datePickerRef} role="dialog" aria-label="选择日期页面" aria-modal="true">
             <header><span>翻到哪一天？</span><button type="button" aria-label="关闭日期选择器" onClick={() => closeDatePicker()}><X size={14} /></button></header>
             <div>
@@ -3061,13 +3257,13 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
           </section>
         )}
 
-        {previousOpenCount > 0 && view === "canvas" && (
+        {previousOpenCount > 0 && view !== "overview" && (
           <button className="canvas-previous-bookmark" type="button" aria-label={`查看前一天留下的 ${previousOpenCount} 张卡片`} onClick={() => openDatePage(previousDate, "backward")}>
             <CaretLeft size={13} /><span>前一天还留着 {previousOpenCount} 张</span>
           </button>
         )}
 
-        {view === "canvas" && (
+        {view !== "overview" && (
         <CanvasStage
           workspace={workspace}
           loadFailed={loadFailed}
@@ -3209,7 +3405,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
         )}
 
         {(undoCount > 0 || captureNotice || (saveState === "error" && workspace)) && (
-          <div className={`canvas-feedback-rail${agentOpen ? " is-agent-open" : ""}`}>
+          <div className={`canvas-feedback-rail${view === "agent" ? " is-agent-view" : ""}`}>
             {saveState === "error" && workspace && (
               <div className="canvas-save-error" role="alert"><WarningCircle size={16} /><span>这次更改还没保存</span><button type="button" onClick={retryWorkspaceSave}><ArrowClockwise size={14} />重试</button></div>
             )}
@@ -3218,14 +3414,13 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
           </div>
         )}
 
-        <div className="canvas-capture-wrap">
-          {agentOpen && (
-            <section className="canvas-agent-panel" role="dialog" aria-label="对话" aria-busy={agentBusy}>
+        {view === "agent" && !searchOpen && !backupMenuOpen && (
+            <section className="canvas-agent-workspace" role="region" aria-label="对话工作区" aria-busy={agentBusy}>
               <header className="canvas-agent-header">
                 <span><ChatCircleDots size={18} />对话</span>
-                <button type="button" aria-label="关闭对话" onClick={() => closeAgent()}><X size={17} /></button>
+                <button className="canvas-agent-settings-button" type="button" aria-label="打开模型设置" title="模型设置" onClick={(event) => openSettings("agent", event.currentTarget)}><GearSix size={16} /></button>
               </header>
-              {selectedCard && <p className="canvas-agent-context">正在处理：{selectedCard.title}</p>}
+              {agentSelectedCard && <p className="canvas-agent-context">正在处理：{agentSelectedCard.title}</p>}
               {agentTurns.length > 0 && (
                 <div className="canvas-agent-turns" ref={agentTurnsRef} aria-live="polite" aria-atomic="false">
                   {agentTurns.map((turn) => {
@@ -3250,6 +3445,18 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
                             ))}
                           </ul>
                         )}
+                        {turn.action?.type === "open-overview" && (
+                          <div className="canvas-agent-turn-actions">
+                            <button
+                              type="button"
+                              aria-label="在总览中查看"
+                              onClick={() => {
+                                setOverviewStatus(turn.action!.status);
+                                switchPrimaryView("overview");
+                              }}
+                            >在总览中查看</button>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -3257,13 +3464,22 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
               )}
               {pendingAgentPlan?.kind === "clarify" && (
                 <div className="canvas-agent-candidates" role="listbox" aria-label="请选择卡片">
-                  {pendingAgentPlan.candidates.map((candidate) => (
+                  {pendingAgentPlan.candidates.map((candidate, index) => (
                     <button
+                      id={`agent-candidate-${candidate.id}`}
                       type="button"
                       role="option"
-                      aria-selected="false"
+                      aria-selected={index === agentCandidateIndex}
+                      tabIndex={index === agentCandidateIndex ? 0 : -1}
+                      autoFocus={index === 0}
                       aria-label={`${candidate.title}，${candidate.description}`}
                       key={candidate.id}
+                      ref={(element) => {
+                        if (element) agentCandidateRefs.current.set(candidate.id, element);
+                        else agentCandidateRefs.current.delete(candidate.id);
+                      }}
+                      onFocus={() => setAgentCandidateIndex(index)}
+                      onKeyDown={(event) => handleAgentCandidateKeyDown(event, index, pendingAgentPlan.candidates)}
                       onClick={() => chooseAgentCandidate(candidate.id)}
                     ><strong>{candidate.title}</strong><small>{candidate.description}</small></button>
                   ))}
@@ -3272,7 +3488,7 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
               {pendingAgentPlan?.kind === "confirm" && (
                 <div className="canvas-agent-confirm-actions">
                   <button type="button" onClick={cancelPendingAgentPlan}>取消</button>
-                  <button type="button" className="is-primary" onClick={confirmPendingAgentPlan}>确认这次操作</button>
+                  <button type="button" className="is-primary" autoFocus onClick={confirmPendingAgentPlan}>确认这次操作</button>
                 </div>
               )}
               {agentBusy && <p className="canvas-agent-progress" role="status">正在处理</p>}
@@ -3282,6 +3498,9 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
                   aria-label="对话输入"
                   value={agentDraft}
                   onChange={(event) => setAgentDraft(event.target.value)}
+                  onCompositionStart={handleAgentCompositionStart}
+                  onCompositionEnd={handleAgentCompositionEnd}
+                  onKeyDown={handleAgentKeyDown}
                   placeholder="说一句要怎么处理..."
                   disabled={Boolean(pendingAgentPlan)}
                   autoFocus
@@ -3289,7 +3508,9 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
                 <button type="submit" aria-label="发送" disabled={!agentDraft.trim() || !workspace || agentBusy || Boolean(pendingAgentPlan)}><ArrowUp size={16} weight="bold" /></button>
               </form>
             </section>
-          )}
+        )}
+
+        <div className="canvas-capture-wrap">
           <form className="canvas-capture" onSubmit={submitCapture}>
             <Plus size={19} className="canvas-capture-plus" />
             <div className="canvas-capture-editor">
@@ -3315,20 +3536,10 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
                 aria-controls={suggestions.length ? "canvas-quick-menu" : undefined}
                 aria-activedescendant={suggestions.length ? `canvas-quick-${activeSuggestion}` : undefined}
                 placeholder={currentPage === LOOSE_PAGE_KEY ? "放进随手页..." : `放进${datePresentation.captureLabel}...`}
-                autoFocus
+                autoFocus={view === "canvas"}
               />
             </div>
             <span className="canvas-capture-hint">#日期&nbsp;&nbsp;!优先级</span>
-            <button
-              className="canvas-agent-trigger"
-              ref={agentTriggerRef}
-              type="button"
-              aria-label={agentOpen ? "对话已打开" : "打开对话"}
-              aria-haspopup="dialog"
-              aria-expanded={agentOpen}
-              title="对话"
-              onClick={(event) => agentOpen ? closeAgent() : openAgent(event.currentTarget)}
-            ><ChatCircleDots size={17} /><span>对话</span></button>
             <button type="submit" aria-label="添加卡片" disabled={!capture.trim() || !workspace}><ArrowUp size={17} weight="bold" /></button>
           </form>
           {suggestions.length > 0 && (
@@ -3394,6 +3605,21 @@ export function App({ repository, now = systemNow, agentModel = localAgentModel 
 
       {pendingImportWorkspace && (
         <div className="canvas-dialog-backdrop" role="presentation"><section className="canvas-confirm-dialog" ref={importDialogRef} role="dialog" aria-labelledby="import-backup-title" aria-describedby="import-backup-description" aria-modal="true"><span className="canvas-confirm-icon is-import"><UploadSimple size={18} /></span><h2 id="import-backup-title">导入这份备份？</h2><p id="import-backup-description">当前画布会被替换。导入后仍可以撤销。</p><div><button type="button" autoFocus onClick={() => closeImportConfirm()}>取消</button><button type="button" onClick={confirmImportWorkspace}>确认导入</button></div></section></div>
+      )}
+
+      {settingsOpen && (
+        <SettingsPanel
+          repository={settingsRepository}
+          initialSection={settingsSection}
+          theme={theme}
+          onThemeChange={changeTheme}
+          onExport={() => exportWorkspaceBackup(false)}
+          onImport={() => {
+            closeSettings(false);
+            beginImportWorkspaceBackup();
+          }}
+          onClose={closeSettings}
+        />
       )}
 
       {searchOpen && (

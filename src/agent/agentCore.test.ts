@@ -64,6 +64,26 @@ describe("local agent interpretation", () => {
     });
   });
 
+  it("does not create a card when a pronoun action has no current target", () => {
+    expect(interpretLocalAgent("这个做完了", CONTEXT)).toEqual({
+      type: "unsupported",
+      message: "先打开或说出要处理的 Card，画布没有变化。",
+    });
+  });
+
+  it.each([
+    "把这个改名为新标题",
+    "给这个加备注稍后处理",
+    "把这个标记为高",
+    "把这个放到明天",
+    "打开这个",
+  ])("keeps a target-edit command without a current target as a no-op: %s", (request) => {
+    expect(interpretLocalAgent(request, CONTEXT)).toEqual({
+      type: "unsupported",
+      message: "先打开或说出要处理的 Card，画布没有变化。",
+    });
+  });
+
   it("turns an explicit open request into a targeted open intent", () => {
     expect(interpretLocalAgent("打开提交报销", CONTEXT)).toEqual({
       type: "open",
@@ -132,6 +152,14 @@ describe("local agent interpretation", () => {
     });
   });
 
+  it("maps midday language to the afternoon time fence", () => {
+    expect(interpretLocalAgent("明天中午吃饭", CONTEXT)).toEqual({
+      type: "create",
+      title: "吃饭",
+      timeConstraint: { date: "2026-09-02", period: "afternoon" },
+    });
+  });
+
   it("rejects a spoken clock whose meridiem disagrees with its actual period", () => {
     expect(interpretLocalAgent("明天下午8点开会", CONTEXT)).toEqual({
       type: "unsupported",
@@ -144,6 +172,63 @@ describe("local agent interpretation", () => {
       type: "list",
       date: "2026-09-01",
       status: "completed",
+    });
+  });
+
+  it("understands open-item queries for any explicit natural date", () => {
+    expect(interpretLocalAgent("明天还有什么", CONTEXT)).toEqual({
+      type: "list",
+      date: "2026-09-02",
+      status: "open",
+    });
+    expect(interpretLocalAgent("周五有什么", CONTEXT)).toEqual({
+      type: "list",
+      date: "2026-09-04",
+      status: "open",
+    });
+  });
+
+  it("understands completed-item queries for any explicit natural date", () => {
+    expect(interpretLocalAgent("周五完成了什么", CONTEXT)).toEqual({
+      type: "list",
+      date: "2026-09-04",
+      status: "completed",
+    });
+    expect(interpretLocalAgent("周五完成了哪些任务", CONTEXT)).toEqual({
+      type: "list",
+      date: "2026-09-04",
+      status: "completed",
+    });
+  });
+
+  it("does not turn a schedule request with a missing destination into a new card", () => {
+    expect(interpretLocalAgent("把报销放到那里", CONTEXT)).toEqual({
+      type: "unsupported",
+      message: "请说清要放到哪一天或时段，画布没有变化。",
+    });
+  });
+
+  it("turns natural priority requests into card updates", () => {
+    expect(interpretLocalAgent("把报销标记为高优先级", CONTEXT)).toEqual({
+      type: "update",
+      target: { kind: "query", query: "报销" },
+      patch: { priority: "high" },
+    });
+    expect(interpretLocalAgent("把这个优先级改为低", { ...CONTEXT, selectedCardId: "card-1" })).toEqual({
+      type: "update",
+      target: { kind: "id", cardId: "card-1" },
+      patch: { priority: "low" },
+    });
+  });
+
+  it("understands a natural reference to the current card", () => {
+    expect(interpretLocalAgent("把这张卡放到明天下午", {
+      ...CONTEXT,
+      selectedCardId: "card-1",
+    })).toEqual({
+      type: "schedule",
+      target: { kind: "id", cardId: "card-1" },
+      timeConstraint: { date: "2026-09-02", period: "afternoon" },
     });
   });
 });
@@ -437,5 +522,35 @@ describe("agent execution", () => {
       x: 320,
       y: 480,
     });
+  });
+
+  it("can reschedule a completed card without reopening the canvas", () => {
+    const workspace = addCard(
+      createEmptyWorkspace(NOW),
+      "已完成报销",
+      "completed-card",
+      "2026-09-01",
+      "completed",
+    );
+    const plan = prepareAgentPlan(
+      interpretLocalAgent("把已完成报销放到明天下午", CONTEXT),
+      workspace,
+      CONTEXT,
+    );
+
+    expect(plan.kind).toBe("execute");
+    const result = executeAgentPlan(workspace, plan, {
+      now: NOW,
+      confirmed: false,
+      createId: () => "unused",
+      positionFor: () => ({ x: 320, y: 480 }),
+    });
+
+    expect(result.changed).toBe(true);
+    expect(result.workspace.cards[0]).toMatchObject({
+      status: "completed",
+      timeConstraint: { date: "2026-09-02", period: "afternoon" },
+    });
+    expect(result.workspace.placements[0].pageKey).toBe("2026-09-02");
   });
 });

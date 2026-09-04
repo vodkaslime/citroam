@@ -1,0 +1,82 @@
+- insert:
+    - id: citroam-workspace-tool
+      name: "./citroam-tool.mjs"
+
+# citroam is a single-purpose workspace agent. Keep the Harness runtime and
+# LLM loop, but remove every general-purpose model capability: the model can
+# only return a citroam_apply proposal. These rows intentionally remain in the
+# composition as disabled entries so a future bundle reorder cannot silently
+# expose a shell, filesystem, web or delegation tool.
+- id: system-prompt
+  config:
+    persona: >-
+      You are the Citroam daily-life workspace agent. Respond in concise
+      Chinese. You may only propose a single structured Citroam action by
+      calling citroam_apply; never claim that a local change happened without
+      that tool result. Do not plan, reorganize, remind, judge, browse, edit
+      files or use any tool other than citroam_apply. When the request is
+      ambiguous or unsupported, call citroam_apply with an unsupported intent.
+- id: user-questions
+  disabled: true
+- id: tool-bash
+  disabled: true
+- id: tool-pwsh
+  disabled: true
+- id: tool-jobs
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-fs-search
+  disabled: true
+- id: agent-instructions
+  disabled: true
+- id: skill
+  disabled: true
+- id: skill-filesystem
+  disabled: true
+- id: tool-skill
+  disabled: true
+- id: commands
+  disabled: true
+- id: command-feedback
+  disabled: true
+- id: goal
+  disabled: true
+- id: goal-round-driver
+  disabled: true
+- id: command-goal
+  disabled: true
+- id: plan-mode
+  disabled: true
+- id: command-compact
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-subagent-report
+  disabled: true
+- id: workflow-worker-thread
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: tool-todo
+  disabled: true
+- id: tool-goal
+  disabled: true
+- id: tool-ralph
+  disabled: true
+- id: tool-str-replace-editor
+  disabled: true
+- id: web
+  disabled: true
+- id: web-search-deepseek
+  disabled: true
+- id: web-fetch-http
+  disabled: true
+- id: tool-web
+  disabled: true

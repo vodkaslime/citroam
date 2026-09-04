@@ -15,8 +15,10 @@ export interface AgentContext {
   now: Date;
   currentPage: CanvasPageKey;
   selectedCardId: string | null;
-  view: "canvas" | "overview";
+  view: "canvas" | "overview" | "agent";
   overviewStatus: "open" | "completed";
+  /** Minimal serialized scene supplied to a real model provider. */
+  workspace?: Workspace;
 }
 
 export interface AgentModel {
@@ -204,8 +206,8 @@ function timeFromText(text: string): ParsedTime {
 function periodFromText(text: string, startTime: string): TimePeriod {
   if (startTime) return periodForTime(startTime);
   if (text.includes("上午") || text.includes("早上")) return "morning";
-  if (text.includes("下午")) return "afternoon";
-  if (text.includes("晚上")) return "evening";
+  if (text.includes("下午") || text.includes("中午")) return "afternoon";
+  if (text.includes("晚上") || text.includes("凌晨")) return "evening";
   return "anytime";
 }
 
@@ -214,7 +216,7 @@ function timeConstraintFromText(text: string, context: AgentContext): ParsedCons
   const startTime = timeFromText(text);
   if (startTime === INVALID_TIME) return INVALID_TIME;
   const explicitDate = dateFromText(text, context);
-  const hasPeriod = /上午|早上|下午|晚上|随时/.test(text);
+  const hasPeriod = /上午|早上|下午|中午|晚上|凌晨|随时/.test(text);
   if (!explicitDate && !startTime && !hasPeriod) return undefined;
   const fallbackDate = context.currentPage === LOOSE_PAGE_KEY ? getLocalDateKey(context.now) : context.currentPage;
   const date = explicitDate ?? fallbackDate;
@@ -230,7 +232,7 @@ function stripTimeLanguage(text: string): string {
     .replace(/今天|明天|后天|昨天/g, " ")
     .replace(/(?:凌晨|早上|上午|中午|下午|晚上)?\s*(?:[一二两三四五六七八九十]{1,2}|\d{1,2})\s*点\s*(?:半|[0-5]?\d分?)?/g, " ")
     .replace(/(?:^|\D)(?:[01]?\d|2[0-3]):[0-5]\d(?=\D|$)/g, " ")
-    .replace(/上午|早上|下午|晚上|随时/g, " ")
+    .replace(/上午|早上|下午|中午|晚上|凌晨|随时/g, " ")
     .replace(/提醒我|提醒一下我|帮我记(?:一下)?|记得/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -238,10 +240,14 @@ function stripTimeLanguage(text: string): string {
 
 function targetFromText(text: string, context: AgentContext): AgentTarget | null {
   const value = text.replace(/^把/, "").trim();
-  if (/^(这个|它|这张|刚才那个)$/.test(value)) {
+  if (/^(这个|它|这张|这张卡|这张卡片|刚才那个)$/.test(value)) {
     return context.selectedCardId ? { kind: "id", cardId: context.selectedCardId } : null;
   }
   return value ? { kind: "query", query: value } : null;
+}
+
+function missingTargetIntent(): AgentIntent {
+  return { type: "unsupported", message: "先打开或说出要处理的 Card，画布没有变化。" };
 }
 
 function fallbackConstraint(context: AgentContext): TimeConstraint | null {
@@ -254,13 +260,16 @@ export function interpretLocalAgent(request: string, context: AgentContext): Age
   const text = request.trim().replace(/[。！!？?]+$/, "");
   if (!text) return { type: "unsupported", message: "说一句你想怎么处理。" };
 
-  if (/今天(?:还有什么|有什么|剩下什么|没做完什么)|今天.*未完成/.test(text)) {
-    return { type: "list", date: getLocalDateKey(context.now), status: "open" };
+  const openList = text.match(/^(.+?)(?:(?:还有|有|剩下|没做完)(?:什么|哪些)(?:待办|任务|事情|卡片)?|没做完的(?:待办|任务|事情|卡片)?|未完成(?:的)?(?:待办|任务|事情|卡片)?|有哪些(?:待办|任务|事情|卡片)?)$/);
+  if (openList) {
+    const date = dateFromText(openList[1].replace(/的$/, ""), context);
+    if (date) return { type: "list", date, status: "open" };
   }
 
-  const completedList = text.match(/^(今天|明天|后天|昨天)(?:已经?|已)?(?:完成|做完)了?(?:什么|哪些)$/);
+  const completedList = text.match(/^(.+?)(?:已经?|已)?(?:完成|做完)(?:了)?(?:的)?(?:(?:什么|哪些)(?:待办|任务|事情|卡片)?|待办|任务|事情|卡片)$/);
   if (completedList) {
-    return { type: "list", date: dateFromText(completedList[1], context)!, status: "completed" };
+    const date = dateFromText(completedList[1].replace(/的$/, ""), context);
+    if (date) return { type: "list", date, status: "completed" };
   }
 
   const batchMove = text.match(/把?(今天|明天|后天|昨天)(?:还)?没做完的(?:都)?(?:放到|放进|移到|挪到|改到)(.+)$/);
@@ -276,43 +285,67 @@ export function interpretLocalAgent(request: string, context: AgentContext): Age
     return { type: "batch-status", sourceDate: dateFromText(batchComplete[1], context)!, status: "completed" };
   }
 
-  const schedule = text.match(/^把?(.+?)(?:放到|放进|移到|挪到|改到|改成)(.+)$/);
-  if (schedule) {
-    const target = targetFromText(schedule[1], context);
-    const timeConstraint = timeConstraintFromText(schedule[2], context);
-    if (!target) return { type: "unsupported", message: "先打开或说出要处理的 Card。" };
-    if (timeConstraint === INVALID_TIME) return { type: "unsupported", message: "这个时间不合法，画布没有变化。" };
-    if (timeConstraint !== undefined) return { type: "schedule", target, timeConstraint };
-  }
-
   const rename = text.match(/^把?(.+?)(?:改名为|标题改成)(.+)$/);
   if (rename) {
     const target = targetFromText(rename[1], context);
     if (target && rename[2].trim()) return { type: "update", target, patch: { title: rename[2].trim() } };
+    if (!target) return missingTargetIntent();
   }
 
   const note = text.match(/^(?:给|把)(.+?)(?:加上?备注|备注为)(.+)$/);
   if (note) {
     const target = targetFromText(note[1], context);
     if (target && note[2].trim()) return { type: "update", target, patch: { notes: note[2].trim() } };
+    if (!target) return missingTargetIntent();
+  }
+
+  const priority = text.match(/^(?:把|给)?(.+?)(?:的)?(?:优先级)?(?:设为|设置为|标记为|标为|改为|改成)(高|中|低)(?:优先级)?$/);
+  if (priority) {
+    const target = targetFromText(priority[1], context);
+    if (target) {
+      const values = { 高: "high", 中: "normal", 低: "low" } as const;
+      return { type: "update", target, patch: { priority: values[priority[2] as keyof typeof values] } };
+    }
+    return missingTargetIntent();
+  }
+
+  const schedule = text.match(/^把?(.+?)(?:放到|放进|移到|挪到|改到|改成)(.+)$/);
+  if (schedule) {
+    const target = targetFromText(schedule[1], context);
+    const destination = schedule[2].trim();
+    const timeConstraint = timeConstraintFromText(destination, context);
+    if (!target) return missingTargetIntent();
+    if (timeConstraint === INVALID_TIME) return { type: "unsupported", message: "这个时间不合法，画布没有变化。" };
+    if (timeConstraint !== undefined) return { type: "schedule", target, timeConstraint };
+    return { type: "unsupported", message: "请说清要放到哪一天或时段，画布没有变化。" };
   }
 
   const completeSuffix = text.match(/^把?(.+?)(?:做完了?|完成了?|标记为完成)$/);
   const completePrefix = text.match(/^(?:完成|做完)(.+)$/);
   const completeTarget = targetFromText(completeSuffix?.[1] ?? completePrefix?.[1] ?? "", context);
   if (completeTarget) return { type: "set-status", target: completeTarget, status: "completed" };
+  if (completeSuffix || completePrefix) {
+    return missingTargetIntent();
+  }
 
   const restore = text.match(/^(?:恢复|重新打开|取消完成)把?(.+)$|^把?(.+?)(?:恢复|改回未完成)$/);
   const restoreTarget = targetFromText(restore?.[1] ?? restore?.[2] ?? "", context);
   if (restoreTarget) return { type: "set-status", target: restoreTarget, status: "open" };
+  if (restore) {
+    return missingTargetIntent();
+  }
 
   const remove = text.match(/^(?:删除|删掉|移除)把?(.+)$|^把?(.+?)(?:删除|删掉|移除)$/);
   const removeTarget = targetFromText(remove?.[1] ?? remove?.[2] ?? "", context);
   if (removeTarget) return { type: "delete", target: removeTarget };
+  if (remove) {
+    return missingTargetIntent();
+  }
 
   const open = text.match(/^打开(?:一下)?(.+)$/);
   const openTarget = targetFromText(open?.[1] ?? "", context);
   if (openTarget) return { type: "open", target: openTarget };
+  if (open) return missingTargetIntent();
 
   const search = text.match(/^(?:找找?|搜索|看看)(?:一下)?(.+)$/);
   if (search?.[1]?.trim()) return { type: "search", query: search[1].trim() };
@@ -554,7 +587,10 @@ export function prepareAgentPlan(modelOutput: unknown, workspace: Workspace, con
       return plan;
     }
     case "schedule": {
-      const resolved = targetPlan(intent, workspace, context, intent.target, "open");
+      // Scheduling is metadata maintenance and remains valid for completed
+      // cards too. Only deleted cards are excluded by targetPlan's active
+      // card filter; completion state is preserved by the operation.
+      const resolved = targetPlan(intent, workspace, context, intent.target);
       if ("plan" in resolved) return resolved.plan;
       const plan = emptyPlan("execute", `好，放到${describeTime(intent.timeConstraint, context.now)}了。`, intent);
       plan.operations = [{ type: "schedule", cardId: resolved.card.id, timeConstraint: intent.timeConstraint }];
