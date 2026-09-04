@@ -15,7 +15,8 @@ export interface AgentContext {
   now: Date;
   currentPage: CanvasPageKey;
   selectedCardId: string | null;
-  view: "canvas" | "overview" | "agent";
+  /** The only primary views; Agent itself is a canvas tool layer. */
+  view: "canvas" | "overview";
   overviewStatus: "open" | "completed";
   /** Minimal serialized scene supplied to a real model provider. */
   workspace?: Workspace;
