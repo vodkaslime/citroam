@@ -358,6 +358,11 @@ button:disabled {
   transform: scale(0.96);
 }
 
+.canvas-agent-trigger[aria-expanded="true"] {
+  background: var(--lemon-foam);
+  color: var(--accent-ink);
+}
+
 .canvas-main {
   position: relative;
   min-width: 0;
@@ -974,19 +979,10 @@ button:disabled {
 
 .canvas-agent-workspace {
   position: absolute;
-  /* Keep the full-surface contract as the fallback when the panel is promoted
-     to a dedicated accessibility layout. The declarations below narrow it to
-     a floating, canvas-integrated surface in the normal desktop composition. */
-  inset: 0;
+  inset: auto 24px 96px auto;
   z-index: 34;
-  top: auto;
-  left: auto;
-  right: 24px;
-  bottom: 96px;
   display: flex;
-  width: min(860px, calc(100% - 40px));
   width: min(370px, calc(100% - 48px));
-  height: 100%;
   height: min(560px, calc(100% - 150px));
   padding: 14px 12px 12px;
   flex-direction: column;
@@ -1027,6 +1023,38 @@ button:disabled {
 
 .canvas-agent-header > span svg {
   color: var(--accent-ink);
+}
+
+.canvas-agent-header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.canvas-agent-close-button,
+.canvas-agent-settings-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease, transform 90ms ease;
+}
+
+.canvas-agent-close-button:hover,
+.canvas-agent-settings-button:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+.canvas-agent-close-button:active,
+.canvas-agent-settings-button:active {
+  transform: scale(0.96);
 }
 
 .canvas-agent-context {
@@ -3364,9 +3392,7 @@ button:disabled {
   }
 
   .canvas-agent-workspace {
-    width: 100%;
-    right: 10px;
-    bottom: 88px;
+    inset: auto 10px 88px auto;
     width: min(390px, calc(100% - 20px));
     height: min(520px, calc(100% - 132px));
     padding: 14px 12px 12px;

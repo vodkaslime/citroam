@@ -98,7 +98,7 @@ export interface AppProps {
   settingsRepository?: SettingsRepository;
 }
 
-type AppView = "canvas" | "overview" | "agent";
+type AppView = "canvas" | "overview";
 type OverviewStatus = "open" | "completed";
 type PageDirection = "forward" | "backward" | "still";
 type QuickToken = string;
@@ -619,6 +619,7 @@ export function App({
   const [theme, setTheme] = useState<"light" | "dark">(initialTheme);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
+  const [agentOpen, setAgentOpen] = useState(false);
   const [visibleViewport, setVisibleViewportState] = useState<Viewport | null>(null);
   const [cardMotions, setCardMotions] = useState<Map<string, CanvasCardMotion>>(() => new Map());
   const [completingCardIds, setCompletingCardIds] = useState<Set<string>>(() => new Set());
@@ -675,6 +676,8 @@ export function App({
   const overviewRowRefs = useRef(new Map<string, HTMLLIElement>());
   const searchResultRefs = useRef(new Map<string, HTMLButtonElement>());
   const agentCandidateRefs = useRef(new Map<string, HTMLButtonElement>());
+  const agentTriggerRef = useRef<HTMLButtonElement>(null);
+  const agentReturnFocusRef = useRef<HTMLElement | null>(null);
   const searchTriggerRef = useRef<HTMLButtonElement>(null);
   const datePickerTriggerRef = useRef<HTMLButtonElement>(null);
   const backupTriggerRef = useRef<HTMLButtonElement>(null);
@@ -805,7 +808,7 @@ export function App({
     return workspace.placements.filter((placement) => placement.pageKey === previousDate
       && openCardIds.has(placement.cardId)).length;
   }, [currentPage, openCards, previousDate, workspace]);
-  const suggestions = captureComposing || suggestionsDismissed || view === "agent" ? [] : quickSuggestions(capture);
+  const suggestions = captureComposing || suggestionsDismissed || agentOpen ? [] : quickSuggestions(capture);
   const searchResults = useMemo(() => {
     const query = searchQuery.trim().toLocaleLowerCase("zh-CN");
     if (!query) return [];
@@ -911,22 +914,22 @@ export function App({
   }, [agentSelectedId, currentPage, overviewStatus, view]);
 
   useEffect(() => {
-    if (view !== "agent") return;
+    if (!agentOpen) return;
     const turns = agentTurnsRef.current;
     if (!turns || typeof turns.scrollTo !== "function") return;
     turns.scrollTo({
       top: turns.scrollHeight,
       behavior: reduceMotionRequested() ? "auto" : "smooth",
     });
-  }, [agentBusy, agentTurns.length, pendingAgentPlan, view]);
+  }, [agentBusy, agentOpen, agentTurns.length, pendingAgentPlan]);
 
   // The capture bar remains mounted while the Agent panel overlays the canvas.
   // Restore the ordinary capture focus explicitly when returning to the canvas;
   // `autoFocus` only runs when an input is first mounted.
   useEffect(() => {
-    if (view !== "canvas") return;
+    if (view !== "canvas" || agentOpen) return;
     focusLater(captureRef.current);
-  }, [view]);
+  }, [agentOpen, view]);
 
   useEffect(() => {
     let midnightTimer: number | null = null;
@@ -1045,7 +1048,7 @@ export function App({
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "j") {
         event.preventDefault();
         if (settingsOpen) return;
-        switchPrimaryView("agent");
+        openAgent(target);
         return;
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLocaleLowerCase() === "k") {
@@ -1056,7 +1059,7 @@ export function App({
       if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLocaleLowerCase() === "z"
         && !target?.matches("input, textarea, select")) {
         event.preventDefault();
-        if (settingsOpen || searchOpen || view === "agent" || datePickerOpen || backupMenuOpen || deleteConfirmOpen || pendingImportWorkspace) return;
+        if (settingsOpen || searchOpen || agentOpen || datePickerOpen || backupMenuOpen || deleteConfirmOpen || pendingImportWorkspace) return;
         undoLastChange();
         return;
       }
@@ -1072,7 +1075,7 @@ export function App({
       else if (pendingAgentPlan) cancelPendingAgentPlan();
       else if (pendingImportWorkspace) closeImportConfirm();
       else if (deleteConfirmOpen) closeDeleteConfirm();
-      else if (view === "agent") focusLater(agentInputRef.current);
+      else if (agentOpen) closeAgent();
       else if (datePickerOpen) closeDatePicker();
       else if (backupMenuOpen) closeBackupMenu();
       else if (interactionActive()) cancelInteraction();
@@ -1094,7 +1097,7 @@ export function App({
       window.removeEventListener("keyup", keyUp);
       window.removeEventListener("blur", releaseSpace);
     };
-  }, [backupMenuOpen, cancelInteraction, currentPage, datePickerOpen, deleteConfirmOpen, interactionActive, pendingAgentPlan, pendingImportWorkspace, searchOpen, selectedAreaId, selectedId, settingsOpen, shownDate, undoWorkspace, view]);
+  }, [agentOpen, backupMenuOpen, cancelInteraction, currentPage, datePickerOpen, deleteConfirmOpen, interactionActive, pendingAgentPlan, pendingImportWorkspace, searchOpen, selectedAreaId, selectedId, settingsOpen, shownDate, undoWorkspace, view]);
 
   function setMotion(cardId: string, motion: CanvasCardMotion, duration = 220) {
     if (reduceMotionRequested()) return;
@@ -1277,27 +1280,15 @@ export function App({
   function switchPrimaryView(nextView: AppView) {
     if (deleteConfirmOpen || pendingImportWorkspace || pendingAgentPlan?.kind === "confirm-destructive") return;
     if (nextView === view) {
-      if (nextView === "agent") {
-        if (searchOpen) closeSearch(false);
-        if (backupMenuOpen) closeBackupMenu(false);
-        if (datePickerOpen) closeDatePicker(false);
-        window.setTimeout(() => agentInputRef.current?.focus(), 0);
-      }
+      if (nextView === "canvas" && agentOpen) closeAgent();
       return;
-    }
-    if (nextView === "agent") {
-      const targetId = selectedId ?? agentSelectedId;
-      if (targetId) {
-        agentSelectedIdRef.current = targetId;
-        setAgentSelectedId(targetId);
-      }
     }
     closeTransientInspectorContext();
     if (datePickerOpen) closeDatePicker(false);
     if (searchOpen) closeSearch(false);
     if (backupMenuOpen) closeBackupMenu(false);
-    if (nextView === "agent") setSuggestionsDismissed(true);
-    else setSuggestionsDismissed(false);
+    if (agentOpen) closeAgent(false);
+    setSuggestionsDismissed(false);
     if (nextView === "canvas") {
       const revealed = revealPendingCapture(currentPage, viewportForInteraction());
       if (revealed.consumed) applyVisibleViewport(revealed.viewport);
@@ -2671,6 +2662,46 @@ export function App({
     localStorage.setItem("citroam.theme", next);
   }
 
+  /**
+   * Agent is a tool layer over the canvas, not a primary view. If opened from
+   * the overview, return to the current canvas page first so every action has
+   * a visible spatial result behind the panel.
+   */
+  function openAgent(returnTarget?: HTMLElement | null) {
+    if (deleteConfirmOpen || pendingImportWorkspace || pendingAgentPlan?.kind === "confirm-destructive") return;
+    if (searchOpen) closeSearch(false);
+    if (datePickerOpen) closeDatePicker(false);
+    if (backupMenuOpen) closeBackupMenu(false);
+    if (view !== "canvas") {
+      closeTransientInspectorContext();
+      setView("canvas");
+      const revealed = revealPendingCapture(currentPage, viewportForInteraction());
+      if (revealed.consumed) applyVisibleViewport(revealed.viewport);
+    }
+    const active = returnTarget && returnTarget !== document.body && returnTarget !== document.documentElement
+      ? returnTarget
+      : document.activeElement instanceof HTMLElement && document.activeElement !== document.body
+        ? document.activeElement
+        : agentTriggerRef.current;
+    agentReturnFocusRef.current = active;
+    setSuggestionsDismissed(true);
+    setAgentOpen(true);
+    window.setTimeout(() => agentInputRef.current?.focus(), 0);
+  }
+
+  function closeAgent(restoreFocus = true) {
+    setAgentOpen(false);
+    setSuggestionsDismissed(false);
+    const returnTarget = agentReturnFocusRef.current;
+    agentReturnFocusRef.current = null;
+    if (restoreFocus) focusLater(returnTarget, agentTriggerRef.current ?? captureRef.current);
+  }
+
+  function toggleAgent(trigger?: HTMLElement | null) {
+    if (agentOpen) closeAgent();
+    else openAgent(trigger);
+  }
+
   function openSettings(section: SettingsSection, returnTarget?: HTMLElement | null) {
     if (deleteConfirmOpen || pendingImportWorkspace || pendingAgentPlan?.kind === "confirm-destructive") return;
     if (searchOpen) closeSearch(false);
@@ -2718,7 +2749,7 @@ export function App({
     if (restoreFocus) {
       window.setTimeout(() => {
         if (returnTarget?.isConnected) returnTarget.focus();
-        else if (view === "agent") agentInputRef.current?.focus();
+        else if (agentOpen) agentInputRef.current?.focus();
         else (searchTriggerRef.current ?? captureRef.current)?.focus();
       }, 0);
     }
@@ -2759,7 +2790,7 @@ export function App({
     setBackupMenuOpen(false);
     if (restoreFocus) {
       window.setTimeout(() => {
-        if (view === "agent") agentInputRef.current?.focus();
+        if (agentOpen) agentInputRef.current?.focus();
         else (backupTriggerRef.current ?? captureRef.current)?.focus();
       }, 0);
     }
@@ -3083,6 +3114,7 @@ export function App({
     // actions truthful by opening the completed overview instead of sending
     // the user to an empty/hidden canvas detail.
     if (card.status !== "open") {
+      closeAgent(false);
       setView("overview");
       setOverviewStatus("completed");
       window.setTimeout(() => overviewRowRefs.current.get(cardId)?.focus(), 0);
@@ -3189,7 +3221,6 @@ export function App({
         <nav className="canvas-view-switch" aria-label="主要视图">
           <button type="button" aria-label="画布" aria-pressed={view === "canvas"} onClick={() => switchPrimaryView("canvas")}>画布</button>
           <button type="button" aria-label="总览" aria-pressed={view === "overview"} onClick={() => switchPrimaryView("overview")}>总览</button>
-          <button type="button" aria-label="对话" aria-pressed={view === "agent"} onClick={() => switchPrimaryView("agent")}>对话</button>
         </nav>
         <button className="canvas-search-button" ref={searchTriggerRef} type="button" aria-label="搜索卡片" title="搜索卡片" aria-haspopup="dialog" aria-expanded={searchOpen} onClick={(event) => openSearch(event.currentTarget)}>
           <MagnifyingGlass size={15} /><span>找一张卡片...</span><kbd>{searchShortcut}</kbd>
@@ -3198,6 +3229,17 @@ export function App({
           <span key={saveState}>{saveState === "loading" ? "正在打开" : saveState === "saving" ? "正在保存" : saveState === "error" ? "尚未保存" : "已存到本机"}</span>
         </div>
         <div className="canvas-titlebar-actions">
+          <button
+            className="canvas-icon-button canvas-agent-trigger"
+            ref={agentTriggerRef}
+            type="button"
+            aria-label="对话"
+            title={agentOpen ? "关闭对话" : "对话"}
+            aria-haspopup="dialog"
+            aria-expanded={agentOpen}
+            aria-pressed={agentOpen}
+            onClick={(event) => toggleAgent(event.currentTarget)}
+          ><ChatCircleDots size={17} /></button>
           <div className="canvas-backup-menu-wrap">
             <button className="canvas-icon-button canvas-backup-trigger" ref={backupTriggerRef} type="button" aria-label={backupMenuOpen ? "关闭本地备份菜单" : "打开本地备份菜单"} aria-haspopup="menu" aria-expanded={backupMenuOpen} title="本地备份" onClick={openBackupMenu}><HardDrive size={17} /></button>
             {backupMenuOpen && (
@@ -3322,7 +3364,7 @@ export function App({
                 <CanvasArea
                   key={area.id}
                   area={area}
-                    selected={selectedAreaId === area.id}
+                  selected={selectedAreaId === area.id}
                   entering={enteringAreaIds.has(area.id)}
                   onMoveRef={(element) => {
                     if (element) areaMoveRefs.current.set(area.id, element);
@@ -3405,7 +3447,7 @@ export function App({
         )}
 
         {(undoCount > 0 || captureNotice || (saveState === "error" && workspace)) && (
-          <div className={`canvas-feedback-rail${view === "agent" ? " is-agent-view" : ""}`}>
+          <div className={`canvas-feedback-rail${agentOpen ? " is-agent-view" : ""}`}>
             {saveState === "error" && workspace && (
               <div className="canvas-save-error" role="alert"><WarningCircle size={16} /><span>这次更改还没保存</span><button type="button" onClick={retryWorkspaceSave}><ArrowClockwise size={14} />重试</button></div>
             )}
@@ -3414,11 +3456,14 @@ export function App({
           </div>
         )}
 
-        {view === "agent" && !searchOpen && !backupMenuOpen && (
+        {agentOpen && !searchOpen && !backupMenuOpen && (
             <section className="canvas-agent-workspace" role="region" aria-label="对话工作区" aria-busy={agentBusy}>
               <header className="canvas-agent-header">
                 <span><ChatCircleDots size={18} />对话</span>
-                <button className="canvas-agent-settings-button" type="button" aria-label="打开模型设置" title="模型设置" onClick={(event) => openSettings("agent", event.currentTarget)}><GearSix size={16} /></button>
+                <div className="canvas-agent-header-actions">
+                  <button className="canvas-agent-settings-button" type="button" aria-label="打开模型设置" title="模型设置" onClick={(event) => openSettings("agent", event.currentTarget)}><GearSix size={16} /></button>
+                  <button className="canvas-agent-close-button" type="button" aria-label="收起对话面板" title="关闭对话" onClick={() => closeAgent()}><X size={16} /></button>
+                </div>
               </header>
               {agentSelectedCard && <p className="canvas-agent-context">正在处理：{agentSelectedCard.title}</p>}
               {agentTurns.length > 0 && (

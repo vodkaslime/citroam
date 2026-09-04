@@ -3553,20 +3553,55 @@ describe("date page canvas", () => {
 });
 
 describe("native agent workspace", () => {
-  it("exposes conversation as a primary view without a temporary capture-bar trigger", async () => {
+  it("keeps Agent out of primary navigation and opens it as a canvas tool overlay", async () => {
+    const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
     await screen.findByRole("region", { name: "今天的画布" });
     const navigation = screen.getByRole("navigation", { name: "主要视图" });
-    const conversation = within(navigation).getByRole("button", { name: "对话" });
+    expect(within(navigation).getAllByRole("button")).toHaveLength(2);
+    expect(within(navigation).queryByRole("button", { name: "对话" })).not.toBeInTheDocument();
 
-    expect(conversation).toHaveAttribute("aria-pressed", "false");
-    expect(within(navigation).getAllByRole("button")).toHaveLength(3);
-    expect(document.querySelector(".canvas-agent-trigger")).not.toBeInTheDocument();
+    const trigger = screen.getByRole("button", { name: "对话" });
+    await user.click(trigger);
+
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "今天的画布" })).toBeInTheDocument();
+    expect(within(navigation).getByRole("button", { name: "画布" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(within(screen.getByRole("region", { name: "对话工作区" })).getByRole("button", { name: "收起对话面板" }));
     expect(screen.queryByRole("region", { name: "对话工作区" })).not.toBeInTheDocument();
   });
 
-  it("enters the native conversation workspace from navigation or Ctrl J and focuses its input", async () => {
+  it("keeps the canvas tool trigger outside the primary-view navigation", async () => {
+    render(<App repository={trackedRepository().repository} now={() => NOW} />);
+
+    await screen.findByRole("region", { name: "今天的画布" });
+    const navigation = screen.getByRole("navigation", { name: "主要视图" });
+    const conversation = screen.getByRole("button", { name: "对话" });
+
+    expect(conversation).toHaveAttribute("aria-pressed", "false");
+    expect(within(navigation).getAllByRole("button")).toHaveLength(2);
+    expect(document.querySelector(".canvas-agent-trigger")).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "对话工作区" })).not.toBeInTheDocument();
+  });
+
+  it("returns to the canvas when the tool is opened from overview", async () => {
+    const user = userEvent.setup();
+    render(<App repository={trackedRepository().repository} now={() => NOW} />);
+
+    await user.click(await screen.findByRole("button", { name: "总览" }));
+    expect(screen.getByRole("heading", { name: "总览" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "对话" }));
+
+    expect(screen.getByRole("region", { name: "今天的画布" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "对话工作区" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "画布" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("opens the canvas tool from its trigger or Ctrl J and focuses its input", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
@@ -3595,12 +3630,12 @@ describe("native agent workspace", () => {
     expect(screen.getByRole("region", { name: "今天的画布" })).toBeInTheDocument();
   });
 
-  it("uses Ctrl J as a primary-view shortcut and restores the canvas capture focus", async () => {
+  it("uses Ctrl J to open the canvas tool and restores canvas capture focus", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
     await screen.findByRole("region", { name: "今天的画布" });
-    expect(screen.getByRole("navigation", { name: "主要视图" })).toHaveTextContent("画布总览对话");
+    expect(screen.getByRole("navigation", { name: "主要视图" })).toHaveTextContent("画布总览");
 
     fireEvent.keyDown(window, { key: "j", ctrlKey: true });
 
@@ -3612,7 +3647,7 @@ describe("native agent workspace", () => {
     ));
   });
 
-  it("marks the feedback rail for the native agent view", async () => {
+  it("marks the feedback rail while the canvas tool is open", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
     const capture = await screen.findByRole("textbox", { name: "快速记录卡片" });
@@ -4066,7 +4101,7 @@ describe("native agent workspace", () => {
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "对话输入" }));
   });
 
-  it("unmounts conversation when switching primary views", async () => {
+  it("unmounts the canvas tool when switching primary views", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
@@ -4079,7 +4114,7 @@ describe("native agent workspace", () => {
     expect(screen.queryByRole("region", { name: "对话工作区" })).not.toBeInTheDocument();
   });
 
-  it("keeps the selected primary-view button focused after leaving conversation", async () => {
+  it("keeps the selected primary-view button focused after closing the canvas tool", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 
@@ -4236,7 +4271,6 @@ describe("native agent workspace", () => {
     await user.click(within(results).getByRole("button", { name: /查看整理报销.*今天/ }));
     expect(screen.getByRole("textbox", { name: "卡片标题" })).toHaveValue("整理报销");
 
-    await user.click(screen.getByRole("button", { name: "对话" }));
     expect(screen.getByText("正在处理：整理报销")).toBeInTheDocument();
   });
 
@@ -4293,7 +4327,6 @@ describe("native agent workspace", () => {
 
     expect(await screen.findByRole("complementary", { name: "卡片详情" })).toBeInTheDocument();
     expect(screen.getByRole("textbox", { name: "卡片标题" })).toHaveValue("提交报销");
-    await user.click(screen.getByRole("button", { name: "对话" }));
     expect(screen.getByText("找到了。")).toBeInTheDocument();
   });
 
@@ -4700,7 +4733,7 @@ describe("native agent workspace", () => {
     expect(tracked.current().areas[0]).toMatchObject({ x: 260, y: 180 });
   });
 
-  it("keeps the short conversation across primary-view switches", async () => {
+  it("keeps the short conversation across canvas and overview switches", async () => {
     const user = userEvent.setup();
     render(<App repository={trackedRepository().repository} now={() => NOW} />);
 

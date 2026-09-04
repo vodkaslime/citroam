@@ -2,7 +2,7 @@
 
 更新时间：2026-09-04
 
-当前验证记录（2026-09-04）：完整 `pnpm test` 回归 438 项通过；`pnpm typecheck`、Web build、性能回归与 Tauri `cargo test` / `cargo check` 均通过。应用设置面板、Keychain 密钥边界、Harness 配置注入与 Rust 模块拆分已进入工程；真实 Tauri 窗口的视觉、动效、焦点与手势，以及 DeepSeek Harness 在目标环境的完整构建仍按发布门槛验收；当前 Harness checkout 的既有 host 构建缺陷见产品需求 AGENT-20 的发布说明。
+当前验证记录（2026-09-04）：完整 `pnpm test` 回归 440 项通过；`pnpm typecheck`、Web build、性能回归与 Tauri `cargo test` / `cargo check` 均通过。应用设置面板、Keychain 密钥边界、Harness 配置注入与 Rust 模块拆分已进入工程；真实 Tauri 窗口的视觉、动效、焦点与手势，以及 DeepSeek Harness 在目标环境的完整构建仍按发布门槛验收；当前 Harness checkout 的既有 host 构建缺陷见产品需求 AGENT-20 的发布说明。
 
 本目录只保留两份产品事实文档：
 
@@ -160,9 +160,9 @@ Agent 是画布中的一等操作能力，但不是第三个一级视图、独�
 
 ## 当前交付重点
 
-当前数量与 Agent 形态说明（2026-09-04）：工程完整回归为 438 项；Agent 已收敛为画布内覆盖面板并通过 Tauri 调用真实 DeepSeek Harness；应用设置已提供模型、Keychain 和 Harness 路径配置。下方出现的“416 项”“421 项”“434 项”“436 项”“原生对话工作区”或“一级视图”均为此前快照，不能覆盖本页开头的当前基线。
+当前数量与 Agent 形态说明（2026-09-04）：工程完整回归为 440 项；Agent 已收敛为画布内覆盖面板并通过 Tauri 调用真实 DeepSeek Harness；应用设置已提供模型、Keychain 和 Harness 路径配置。下方出现的“416 项”“421 项”“434 项”“436 项”“原生对话工作区”或“一级视图”均为此前快照，不能覆盖本页开头的当前基线。
 
-P0 继续收口自由画布与原生对话工作区的真实窗口可靠性：
+P0 继续收口自由画布与画布内 Agent 面板的真实窗口可靠性：
 
 1. 在 760×560 与常用桌面尺寸完成主链路、浮层、文字截断、拖动、缩放、动画、焦点与保存失败的真实窗口 smoke test。
 2. 在真实浏览器与触控设备确认 Card / Area 的轻点、拖动、平移、移动和缩放不会串台；工程行为测试已经覆盖对应 pointer 序列。

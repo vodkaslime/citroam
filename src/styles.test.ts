@@ -243,20 +243,20 @@ describe("citroam Juicy Utility visual contracts", () => {
     expect(ruleFor('.canvas-capture > button[type="submit"]')).toMatch(/width:\s*40px[\s\S]*height:\s*40px[\s\S]*border-radius:\s*12px/);
   });
 
-  it("lays conversation out as a native full-height workspace", () => {
+  it("lays conversation out as a floating canvas tool workspace", () => {
     const workspace = ruleFor(".canvas-agent-workspace");
 
     expect(workspace).toMatch(/position:\s*absolute/);
-    expect(workspace).toMatch(/inset:\s*0/);
+    expect(workspace).toMatch(/inset:\s*auto 24px 96px auto/);
     expect(workspace).toMatch(/display:\s*flex/);
-    expect(workspace).toMatch(/width:\s*min\(860px, calc\(100% - 40px\)\)/);
-    expect(workspace).toMatch(/height:\s*100%/);
+    expect(workspace).toMatch(/width:\s*min\(370px, calc\(100% - 48px\)\)/);
+    expect(workspace).toMatch(/height:\s*min\(560px, calc\(100% - 150px\)\)/);
     expect(workspace).toMatch(/flex-direction:\s*column/);
     expect(workspace).toMatch(/animation:\s*canvas-agent-in 220ms/);
     expect(styles).toMatch(/@keyframes canvas-agent-in[\s\S]*translateY\(8px\)[\s\S]*translateY\(0\)/);
     expect(styles).not.toContain(".canvas-agent-panel");
-    expect(styles).not.toContain(".canvas-agent-trigger");
     expect(styles).not.toContain(".canvas-agent-backdrop");
+    expect(ruleFor(".canvas-agent-trigger[aria-expanded=\"true\"]")).toMatch(/background:/);
   });
 
   it("keeps agent messages scrollable while the compose bar stays available", () => {
@@ -298,7 +298,8 @@ describe("citroam Juicy Utility visual contracts", () => {
   it("keeps the agent workspace inside the minimum-window safe area", () => {
     const narrowRules = styles.slice(styles.lastIndexOf("@media (max-width: 760px)"));
 
-    expect(narrowRules).toMatch(/\.canvas-agent-workspace\s*\{[^}]*width:\s*100%/);
+    expect(narrowRules).toMatch(/\.canvas-agent-workspace\s*\{[^}]*inset:\s*auto 10px 88px auto/);
+    expect(narrowRules).toMatch(/\.canvas-agent-workspace\s*\{[^}]*width:\s*min\(390px, calc\(100% - 20px\)\)/);
     expect(narrowRules).toMatch(/\.canvas-agent-workspace\s*\{[^}]*padding:/);
     expect(narrowRules).toMatch(/\.canvas-capture\s*\{[^}]*grid-template-columns:\s*auto minmax\(0, 1fr\) auto auto/);
   });
