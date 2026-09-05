@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -17,9 +17,9 @@ use crate::settings::{runtime_settings, settings_path, AgentRuntimeSettings};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct HarnessState {
-    process: Mutex<Option<HarnessProcess>>,
+    process: Arc<Mutex<Option<HarnessProcess>>>,
 }
 
 struct HarnessProcess {
@@ -381,10 +381,9 @@ fn run_prompt(
     })
 }
 
-#[tauri::command]
-pub fn agent_prompt(
+fn agent_prompt_blocking(
     app: AppHandle,
-    state: State<'_, HarnessState>,
+    state: &HarnessState,
     request_text: String,
     context: Value,
 ) -> Result<HarnessRun, String> {
@@ -409,6 +408,24 @@ pub fn agent_prompt(
             Err(error)
         }
     }
+}
+
+/// Run the synchronous JSON-RPC bridge away from Tauri's webview/IPC thread.
+/// Harness prompts may wait on model I/O and session events for minutes; doing
+/// that work inline would make the native window appear frozen and block input.
+#[tauri::command]
+pub async fn agent_prompt(
+    app: AppHandle,
+    state: State<'_, HarnessState>,
+    request_text: String,
+    context: Value,
+) -> Result<HarnessRun, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        agent_prompt_blocking(app, &state, request_text, context)
+    })
+    .await
+    .map_err(|error| format!("DeepSeek Harness 后台任务失败：{error}"))?
 }
 
 #[tauri::command]
@@ -444,6 +461,29 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::process::Command;
+
+    fn assert_future<T: std::future::Future<Output = Result<super::HarnessRun, String>>>(
+        _future: T,
+    ) {
+    }
+
+    fn unreachable_value<T>() -> T {
+        panic!("type-check helper must not execute");
+    }
+
+    #[test]
+    fn agent_prompt_is_an_async_command() {
+        if false {
+            let app: tauri::AppHandle = unreachable_value();
+            let state: tauri::State<'static, super::HarnessState> = unreachable_value();
+            assert_future(super::agent_prompt(
+                app,
+                state,
+                String::new(),
+                serde_json::Value::Null,
+            ));
+        }
+    }
 
     fn runtime_settings() -> AgentRuntimeSettings {
         AgentRuntimeSettings {
