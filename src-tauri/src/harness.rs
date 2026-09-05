@@ -165,6 +165,7 @@ fn spawn_harness(settings: &AgentRuntimeSettings) -> Result<HarnessProcess, Stri
     command.args(["--patch", patch.to_string_lossy().as_ref()]);
     command
         .current_dir(&root)
+        .env("CITROAM_HARNESS_ROOT", &root)
         .env(
             "NODE_PATH",
             env::var("NODE_PATH").unwrap_or_else(|_| {
@@ -519,6 +520,24 @@ mod tests {
             .expect("configured home");
         assert_eq!(path, PathBuf::from("/tmp/citroam-configured-home"));
         assert!(!owned);
+    }
+
+    #[test]
+    fn bundled_citroam_tool_loads_without_an_inherited_node_path() {
+        let root = resolve_harness_root(None).expect("deepseek-harness workspace");
+        let tool = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../agent/citroam-tool.mjs");
+        let node = std::env::var("CITROAM_NODE").unwrap_or_else(|_| "node".to_string());
+        let output = Command::new(node)
+            .current_dir(root)
+            .env_remove("NODE_PATH")
+            .arg(tool)
+            .output()
+            .expect("run bundled citroam tool");
+        assert!(
+            output.status.success(),
+            "citroam tool should load without NODE_PATH; stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     #[test]
